@@ -1,0 +1,155 @@
+#!/bin/bash
+# Local fake of PBS qsub, for testing job scripts and the LoadBalancer without PBS.
+# Usage: qsub [-N name] [-o file] [-e file] [-q queue] [-l res=val,...]
+#             [-v VAR=value,VAR2,...] [-V] [other PBS options ignored] [script]
+# Prints "<id>.fakepbs". The same options are honored as #PBS directives.
+# Environment: MAX_JOBS (concurrent jobs, default nproc), FAKEPBS_DIR (state dir).
+# Job output defaults to <name>.o<id> / <name>.e<id> in the submission directory.
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$here/fakepbs-common.sh"
+fp_init
+
+name= out= err= queue=workq vars=() ncpus=1 walltime=
+declare -A seen_cli=()
+script_file=
+
+# apply <option> <value> <from_cli>: command line wins over #PBS directives.
+apply() {
+	local opt=$1 val=$2 cli=$3
+	if [[ $cli != 1 && -n ${seen_cli[$opt]:-} ]]; then
+		return
+	fi
+	[[ $cli == 1 ]] && seen_cli[$opt]=1
+	case $opt in
+		-N) name=$val ;;
+		-o) out=$val ;;
+		-e) err=$val ;;
+		-q) queue=$val ;;
+		-l)
+			local IFS=, item
+			for item in $val; do
+				[[ $item =~ (^|:)ncpus=([0-9]+) ]] && ncpus=${BASH_REMATCH[2]}
+				[[ $item == walltime=* ]] && walltime=${item#walltime=}
+			done
+			;;
+		-v)
+			local IFS=, item
+			for item in $val; do
+				if [[ $item == *=* ]]; then
+					vars+=("$item")
+				elif [[ -v $item ]]; then
+					vars+=("$item=${!item}")
+				fi
+			done
+			;;
+	esac
+}
+
+# Options taking an argument that we accept and ignore.
+ignored_with_arg=" -A -a -C -c -h -j -J -k -m -M -p -P -r -S -u -W -R -X "
+
+while (($#)); do
+	case $1 in
+		-N|-o|-e|-q|-l|-v)
+			(($# >= 2)) || { echo "qsub: option $1 requires an argument" >&2; exit 2; }
+			apply "$1" "$2" 1
+			shift 2 ;;
+		-V|-z|-I|-f) shift ;;
+		-[NoeqlvJ]*) # attached argument, e.g. -Nname
+			apply "${1:0:2}" "${1:2}" 1
+			shift ;;
+		--) shift; script_file=${1:-}; break ;;
+		-*)
+			if [[ $ignored_with_arg == *" $1 "* ]]; then
+				(($# >= 2)) || { echo "qsub: option $1 requires an argument" >&2; exit 2; }
+				shift 2
+			else
+				shift
+			fi ;;
+		*) script_file=$1; shift; break ;;
+	esac
+done
+
+# Read the script (from file, or stdin like real qsub).
+tmp=$(mktemp "$FAKEPBS_DIR/submit.XXXXXX") || exit 1
+trap 'rm -f -- "$tmp"' EXIT
+if [[ -n $script_file ]]; then
+	[[ -r $script_file ]] || { echo "qsub: script file '$script_file' cannot be read" >&2; exit 1; }
+	cat -- "$script_file" > "$tmp"
+	default_name=${script_file##*/}
+else
+	cat > "$tmp"
+	default_name=STDIN
+fi
+
+# Embedded #PBS directives (only those before the first command).
+while IFS= read -r line; do
+	[[ $line =~ ^[[:space:]]*$ ]] && continue
+	if [[ $line =~ ^#PBS[[:space:]]+(-[A-Za-z])[[:space:]]*(.*)$ ]]; then
+		opt=${BASH_REMATCH[1]}
+		val=${BASH_REMATCH[2]}
+		val=${val%"${val##*[![:space:]]}"}
+		apply "$opt" "$val" 0
+	elif [[ $line != \#* ]]; then
+		break
+	fi
+done < "$tmp"
+
+name=${name:-$default_name}
+
+# Allocate the job id.
+exec 7> "$FAKEPBS_DIR/lock"
+flock -x 7
+num=$(( $(cat "$FAKEPBS_DIR/counter" 2>/dev/null || echo 0) + 1 ))
+echo "$num" > "$FAKEPBS_DIR/counter"
+dir="$FAKEPBS_JOBS/$num"
+mkdir -p -- "$dir"
+flock -u 7
+exec 7>&-
+
+workdir=$PWD
+# Output path: "host:path", a directory, or a file; relative to the workdir.
+resolve() {
+	local p=${1#*:} default=$2
+	if [[ -z $p ]]; then printf '%s\n' "$default"
+	elif [[ $p == /* ]]; then [[ -d $p ]] && printf '%s\n' "${p%/}/${default##*/}" || printf '%s\n' "$p"
+	elif [[ -d $workdir/$p ]]; then printf '%s\n' "$workdir/${p%/}/${default##*/}"
+	else printf '%s\n' "$workdir/$p"; fi
+}
+
+mv -- "$tmp" "$dir/script"
+trap - EXIT
+fp_set "$num" name "$name"
+fp_set "$num" owner "${USER:-$(id -un)}"
+fp_set "$num" queue "$queue"
+fp_set "$num" workdir "$workdir"
+fp_set "$num" ncpus "$ncpus"
+fp_set "$num" stdout "$(resolve "$out" "$workdir/$name.o$num")"
+fp_set "$num" stderr "$(resolve "$err" "$workdir/$name.e$num")"
+if [[ -n $walltime ]]; then
+	if secs=$(fp_walltime_seconds "$walltime"); then
+		fp_set "$num" walltime_s "$secs"
+		fp_set "$num" walltime "$walltime"
+	fi
+fi
+: > "$dir/vars"
+((${#vars[@]})) && printf '%s\n' "${vars[@]}" > "$dir/vars"
+: > "$dir/nodefile"
+for ((i = 0; i < ncpus; ++i)); do hostname >> "$dir/nodefile"; done
+date +%s > "$dir/qtime"
+fp_set "$num" state Q
+
+# Detached supervisor: own session (so qdel can kill the whole job tree) and no
+# inherited stdout, so a caller reading qsub's output through a pipe does not block.
+FAKEPBS_DIR=$FAKEPBS_DIR FAKEPBS_SERVER=$FAKEPBS_SERVER MAX_JOBS=${MAX_JOBS:-$(nproc)} \
+	setsid bash -c 'source "$1"; fp_run_job "$2"' _ "$here/fakepbs-common.sh" "$num" \
+	< /dev/null > /dev/null 2>&1 &
+disown
+# Make sure the pid is recorded before returning, so qstat/qdel see the job.
+for _ in {1..100}; do
+	[[ -s $dir/pid ]] && break
+	sleep 0.02
+done
+
+printf '%s\n' "$num.$FAKEPBS_SERVER"

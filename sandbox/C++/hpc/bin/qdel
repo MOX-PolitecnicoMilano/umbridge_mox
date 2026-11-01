@@ -1,0 +1,49 @@
+#!/bin/bash
+# Local fake of PBS qdel. Usage: qdel [-W force] [-x] <job_id> [<job_id> ...]
+# Terminates a queued/running fake job (whole process group) and marks it finished.
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$here/fakepbs-common.sh"
+fp_init
+
+ids=()
+while (($#)); do
+	case $1 in
+		-W|-m) shift 2 ;;
+		-*) shift ;;
+		*) ids+=("$1"); shift ;;
+	esac
+done
+
+if ((${#ids[@]} == 0)); then
+	echo "usage: qdel [-W force] [-x] job_identifier..." >&2
+	exit 2
+fi
+
+rc=0
+for id in "${ids[@]}"; do
+	num=$(fp_normalize_id "$id") && [[ -d $FAKEPBS_JOBS/$num ]] || {
+		echo "qdel: Unknown Job Id $id" >&2
+		rc=153
+		continue
+	}
+	if [[ $(fp_state "$num") == F ]]; then
+		echo "qdel: Job has finished $id" >&2
+		rc=35
+		continue
+	fi
+	pid=$(fp_get "$num" pid)
+	# The supervisor is a session leader (pid == sid), and timeout puts the job in
+	# a separate process group, so signal every process of the session.
+	# TERM first so the job's own cleanup traps run; escalate to KILL.
+	session_kill() { ps -s "$pid" -o pid= 2>/dev/null | xargs -r kill "-$1" 2>/dev/null; }
+	session_kill TERM
+	for _ in {1..50}; do
+		[[ -z $(ps -s "$pid" -o pid= 2>/dev/null) ]] && break
+		sleep 0.1
+	done
+	session_kill KILL
+	fp_set "$num" exit 271
+	fp_set "$num" state F
+done
+exit "$rc"

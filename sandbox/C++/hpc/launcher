@@ -1,0 +1,26 @@
+#!/bin/bash
+#PBS -l select=1:ncpus=16:mpiprocs=16
+#PBS -l walltime=120:00:00
+#PBS -N prova
+#PBS -o prova.txt
+#PBS -e error_prova.txt
+
+export HOME=/u/formaggia
+source /u/formaggia/.bashrc
+
+# Versione allineata a quella nel container (MPICH 4.1.2)
+spack load mpich@4.1.2
+
+cd /u/formaggia/sandbox
+
+# --- Diagnostica ---
+echo "Nodo: $(hostname)"
+echo "Nodefile:"; cat "$PBS_NODEFILE"
+which mpirun
+mpirun --version | head -n 3
+
+# --- Evita SSH: esecuzione locale ---
+mpirun -n 16 -launcher fork apptainer exec test.sif /opt/mpitest
+ 
+
+

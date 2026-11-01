@@ -1,0 +1,87 @@
+#!/bin/bash
+# Local fake of PBS qstat. Usage: qstat [-f] [-x] [-u user] [job_id ...]
+# Without -x only queued (Q) and running (R) jobs are shown; -x also shows
+# finished (F) ones. An unknown/finished id gives "Unknown Job Id" (exit 153).
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$here/fakepbs-common.sh"
+fp_init
+
+full=0 history=0 user= ids=()
+while (($#)); do
+	case $1 in
+		-f) full=1; shift ;;
+		-x) history=1; shift ;;
+		-u) user=${2:-}; shift 2 ;;
+		-u*) user=${1#-u}; shift ;;
+		-*) shift ;;
+		*) ids+=("$1"); shift ;;
+	esac
+done
+
+epoch_to_date() { date -d "@$1" '+%a %b %e %H:%M:%S %Y'; }
+
+rc=0
+nums=()
+if ((${#ids[@]})); then
+	for id in "${ids[@]}"; do
+		num=$(fp_normalize_id "$id") && [[ -d $FAKEPBS_JOBS/$num ]] || {
+			echo "qstat: Unknown Job Id $id" >&2
+			rc=153
+			continue
+		}
+		if ((!history)) && [[ $(fp_state "$num") == F ]]; then
+			echo "qstat: Job has finished, use -x or -H to obtain historical job information" >&2
+			rc=35
+			continue
+		fi
+		nums+=("$num")
+	done
+else
+	while read -r num; do
+		[[ -n $num ]] || continue
+		[[ -z $user || $(fp_get "$num" owner) == "$user" ]] || continue
+		((history)) || [[ $(fp_state "$num") != F ]] || continue
+		nums+=("$num")
+	done < <(fp_list_ids)
+fi
+
+if ((${#nums[@]} == 0)); then
+	exit "$rc"
+fi
+
+if ((full)); then
+	for num in "${nums[@]}"; do
+		state=$(fp_state "$num")
+		echo "Job Id: $num.$FAKEPBS_SERVER"
+		echo "    Job_Name = $(fp_get "$num" name)"
+		echo "    Job_Owner = $(fp_get "$num" owner)@$(hostname)"
+		echo "    job_state = $state"
+		echo "    queue = $(fp_get "$num" queue)"
+		echo "    server = $(hostname)"
+		[[ $state == F ]] && echo "    Exit_status = $(fp_get "$num" exit)"
+		echo "    Output_Path = $(hostname):$(fp_get "$num" stdout)"
+		echo "    Error_Path = $(hostname):$(fp_get "$num" stderr)"
+		echo "    qtime = $(epoch_to_date "$(fp_get "$num" qtime)")"
+		[[ -n $(fp_get "$num" stime) ]] && echo "    stime = $(epoch_to_date "$(fp_get "$num" stime)")"
+		echo "    Resource_List.ncpus = $(fp_get "$num" ncpus)"
+		[[ -n $(fp_get "$num" walltime) ]] && echo "    Resource_List.walltime = $(fp_get "$num" walltime)"
+		echo "    Variable_List = PBS_O_WORKDIR=$(fp_get "$num" workdir)"
+		echo
+	done
+else
+	printf '%-18s %-16s %-16s %-8s %s %s\n' "Job id" "Name" "User" "Time Use" "S" "Queue"
+	printf '%-18s %-16s %-16s %-8s %s %s\n' "------------------" "----------------" "----------------" "--------" "-" "-----"
+	for num in "${nums[@]}"; do
+		state=$(fp_state "$num")
+		used="--"
+		if [[ -n $(fp_get "$num" stime) ]]; then
+			end=$(fp_get "$num" etime)
+			secs=$(( ${end:-$(date +%s)} - $(fp_get "$num" stime) ))
+			printf -v used '%02d:%02d:%02d' $((secs / 3600)) $((secs % 3600 / 60)) $((secs % 60))
+		fi
+		printf '%-18s %-16.16s %-16.16s %-8s %s %s\n' "$num.$FAKEPBS_SERVER" \
+			"$(fp_get "$num" name)" "$(fp_get "$num" owner)" "$used" "$state" "$(fp_get "$num" queue)"
+	done
+fi
+exit "$rc"

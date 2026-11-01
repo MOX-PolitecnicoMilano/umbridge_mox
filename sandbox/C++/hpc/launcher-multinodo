@@ -1,0 +1,25 @@
+#!/bin/bash
+#PBS -l select=2:ncpus=16:mpiprocs=16
+#PBS -l place=scatter
+#PBS -l walltime=120:00:00
+#PBS -N prova
+#PBS -o prova.txt
+#PBS -e error_prova.txt
+
+export HOME=/u/formaggia
+source /u/formaggia/.bashrc
+
+spack load mpich@4.1.2
+
+cd /u/formaggia/sandbox
+
+# --- Diagnostica (puoi toglierla quando tutto funziona) ---
+echo "Nodefile:"; sort "$PBS_NODEFILE" | uniq -c
+env | grep HYDRA
+
+unset HYDRA_HOST_FILE
+export HYDRA_LAUNCHER=ssh
+export HYDRA_LAUNCHER_EXTRA_ARGS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+NP=$(wc -l < "$PBS_NODEFILE")
+mpirun -n $NP -f "$PBS_NODEFILE" apptainer exec test.sif /opt/mpitest
+
