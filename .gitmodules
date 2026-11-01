@@ -1,0 +1,3 @@
+[submodule "umbridge"]
+	path = umbridge
+	url = git@github.com:UM-Bridge/umbridge.git
