@@ -1,0 +1,7 @@
+flowchart LR
+    C[Client: laptop or allocated node] -->|HTTP, optionally through SSH| L[LoadBalancer on a fixed login node]
+    L -->|qsub and qdel| P[PBS scheduler]
+    P -->|Starts job.sh| M[testmodel HTTP server on a compute node]
+    M -->|Publishes URL| F[Shared directory: urls]
+    F -->|URL discovery| L
+    L -->|HTTP model operation| M

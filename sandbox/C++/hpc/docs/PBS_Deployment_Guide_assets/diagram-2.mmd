@@ -1,0 +1,19 @@
+sequenceDiagram
+    participant C as Client
+    participant L as Login-node LoadBalancer
+    participant P as PBS
+    participant M as Compute-node model
+    participant F as Shared urls directory
+    C->>L: Model operation
+    L->>P: qsub -v UMBRIDGE_LOADBALANCER_COMM_FILEDIR=urls script
+    P-->>L: Full job ID. C++ retains numeric part
+    P->>M: Start job.sh and testmodel
+    M->>M: Wait for successful /Info response
+    M->>F: Atomically publish url-numericID.txt
+    L->>F: Read URL
+    L->>M: Discover model and supported operations
+    L->>F: Remove announcement after acquisition
+    L->>M: Forward requested operation
+    M-->>L: Numerical result
+    L->>P: qdel numericID when model owner is destroyed
+    L-->>C: Return result

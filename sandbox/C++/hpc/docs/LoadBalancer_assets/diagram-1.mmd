@@ -1,0 +1,20 @@
+sequenceDiagram
+    participant Client
+    participant LB as LoadBalancer
+    participant Manager as CommandJobManager
+    participant Scheduler
+    participant Backend as Model server
+    participant Files as Shared filesystem
+    Client->>LB: Evaluate(inputs, config)
+    LB->>Manager: requestModelAccess(name)
+    Manager->>Scheduler: Submit selected script with URL directory
+    Scheduler->>Backend: Start job and model server
+    Backend->>Files: Job script writes url-ID.txt
+    Manager->>Files: Poll, then read URL
+    Manager->>Backend: HTTPModel discovers model and capabilities
+    Manager->>Files: Communicator destruction removes URL file
+    Manager-->>LB: JobModel owning job and HTTPModel
+    LB->>Backend: Forward Evaluate through JobModel / HTTPModel
+    Backend-->>LB: Model outputs
+    LB->>Scheduler: Job destruction requests cancellation
+    LB-->>Client: Outputs

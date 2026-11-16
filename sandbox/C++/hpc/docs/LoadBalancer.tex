@@ -1,0 +1,1109 @@
+% Converted from LoadBalancer.md; original wording and diagram retained.
+% Build from this directory: pdflatex LoadBalancer.tex (run twice).
+% Keep LoadBalancer_assets/ beside this source.
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\PassOptionsToPackage{dvipsnames,svgnames,x11names}{xcolor}
+%
+\documentclass[
+  11pt,
+  a4paper,
+]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{setspace}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\usepackage[margin=20mm]{geometry}
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\newenvironment{Shaded}{}{}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.49,0.56,0.16}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\BuiltInTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{#1}}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.53,0.00,0.00}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.56,0.13,0.00}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.73,0.13,0.13}{\textit{#1}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.02,0.16,0.49}{#1}}
+\newcommand{\ImportTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{\textbf{#1}}}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.40,0.40,0.40}{#1}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.74,0.48,0.00}{#1}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.73,0.40,0.53}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.10,0.09,0.49}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\usepackage{longtable,booktabs,array}
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+% Markdown-inspired typography; compile with pdfLaTeX from this directory.
+\usepackage{graphicx}
+\usepackage{tgheros}
+\usepackage[scale=1.0]{inconsolata}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{seqsplit}
+\DeclareRobustCommand{\InlineCode}[1]{{\ttfamily\seqsplit{#1}}}
+\usepackage{titlesec}
+\usepackage{needspace}
+\definecolor{MarkdownText}{HTML}{24292F}
+\definecolor{MarkdownRule}{HTML}{D0D7DE}
+\definecolor{shadecolor}{HTML}{F6F8FA}
+\color{MarkdownText}
+\titleformat{\section}{\LARGE\bfseries\raggedright}{}{0pt}{}[\color{MarkdownRule}\titlerule]
+\titleformat{\subsection}{\Large\bfseries\raggedright}{}{0pt}{}[\color{MarkdownRule}\titlerule]
+\titleformat{\subsubsection}{\large\bfseries\raggedright}{}{0pt}{}
+\titlespacing*{\section}{0pt}{1.3em}{0.7em}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.6em}
+\titlespacing*{\subsubsection}{0pt}{1em}{0.4em}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em plus 0.1em minus 0.1em}
+\renewcommand{\arraystretch}{1.18}
+\setlength{\tabcolsep}{5pt}
+\setlength{\emergencystretch}{3em}
+\raggedright
+\raggedbottom
+\widowpenalty=10000
+\clubpenalty=10000
+\usepackage{framed}
+\renewenvironment{Shaded}{\begin{snugshade}}{\end{snugshade}}
+\usepackage{fvextra}
+\fvset{breaklines=true,breakanywhere=true,fontsize=\small}
+\DefineVerbatimEnvironment{verbatim}{Verbatim}{breaklines=true,breakanywhere=true,fontsize=\small}
+\BeforeBeginEnvironment{verbatim}{\begin{snugshade}}
+\AfterEndEnvironment{verbatim}{\end{snugshade}}
+\AtBeginEnvironment{longtable}{\small}
+\AtBeginDocument{\pdfstringdefDisableCommands{\def\InlineCode#1{#1}}}
+\ifLuaTeX
+  \usepackage{selnolig}  % disable illegal ligatures
+\fi
+\IfFileExists{bookmark.sty}{\usepackage{bookmark}}{\usepackage{hyperref}}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  colorlinks=true,
+  linkcolor={blue},
+  filecolor={Maroon},
+  citecolor={Blue},
+  urlcolor={blue},
+  pdfcreator={LaTeX via pandoc}}
+
+\author{}
+\date{}
+
+\begin{document}
+
+\setstretch{1.06}
+\hypertarget{understanding-loadbalancer.hpp-and-loadbalancer.cpp}{%
+\section{\texorpdfstring{Understanding \InlineCode{LoadBalancer.hpp} and
+\InlineCode{LoadBalancer.cpp}}{Understanding LoadBalancer.hpp and
+LoadBalancer.cpp}}\label{understanding-loadbalancer.hpp-and-loadbalancer.cpp}}
+
+This guide describes the implementation in
+\href{LoadBalancer.hpp}{\InlineCode{LoadBalancer.hpp}} and
+\href{LoadBalancer.cpp}{\InlineCode{LoadBalancer.cpp}} in
+\InlineCode{sandbox/C++/hpc}, including its PBS extension. A separate
+copy lives in \href{../../../umbridge/hpc}{\InlineCode{umbridge/hpc}};
+the two copies are not identical. The explanations below follow the
+local sandbox code and the bundled
+\href{../../../umbridge/lib/umbridge.h}{\InlineCode{umbridge.h}}.
+
+\hypertarget{purpose-and-overall-design}{%
+\subsection{Purpose and overall
+design}\label{purpose-and-overall-design}}
+
+The load balancer exposes a UM-Bridge HTTP server to a client, such as a
+numerical method requesting model evaluations. It obtains model servers
+through an HPC scheduler and forwards operations to those servers as a
+UM-Bridge client. This is the scope described in the
+\href{https://um-bridge-benchmarks.readthedocs.io/en/docs/umbridge/hpc.html}{UM-Bridge
+HPC overview}.
+
+The implementation starts a new scheduler job each time a
+\InlineCode{LoadBalancer} method requests model access. The job runs a
+server, publishes its URL, and remains alive while the operation
+executes. C++ object destruction then requests job cancellation. There
+is no persistent pool of model servers in these files. With HyperQueue,
+several such jobs can run inside HPC allocations managed by HyperQueue;
+a HyperQueue job need not correspond to a new batch allocation.
+
+The main division of responsibilities is:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.4300}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.5700}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Component
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Responsibility
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\InlineCode{LoadBalancer} & Expose the UM-Bridge model API and acquire a
+backend for each forwarded method call. \\
+\InlineCode{JobManager} / \InlineCode{CommandJobManager} & Combine
+script selection, job submission, URL discovery, and HTTP connection
+creation. \\
+\InlineCode{JobSubmitter} and its implementations & Translate
+environment variables into scheduler arguments and create a
+\InlineCode{Job}. \\
+\InlineCode{Job} and its implementations & Hold a scheduler job
+identifier and cancel the job on destruction. \\
+\InlineCode{JobCommunicator} / \InlineCode{FilesystemCommunicator} &
+Tell a job where to publish its server URL and read it back. \\
+\InlineCode{JobCommunicatorFactory} /
+\InlineCode{FilesystemCommunicatorFactory} & Create a separate
+communicator for each submission. \\
+\InlineCode{JobScriptLocator} & Select a default or model-specific
+launch script. \\
+\InlineCode{JobModel} & Keep the scheduler job alive for as long as its
+HTTP model is used. \\
+\InlineCode{main} & Assemble the components, discover model names, and
+start the public server. \\
+\end{longtable}
+
+Most of the implementation is in the header. The \InlineCode{.cpp} file
+contains startup helpers and \InlineCode{main}; the split is
+architectural rather than a conventional split between declarations and
+definitions.
+
+The included \InlineCode{umbridge.h} supplies the model interface, HTTP
+client/server implementation, and \InlineCode{json} alias for
+\InlineCode{nlohmann::json}. Standard-library types provide paths,
+containers, streams, ownership pointers, synchronization, and timing.
+Some of those declarations arrive through transitive includes rather
+than explicit includes in \InlineCode{LoadBalancer.hpp}.
+
+\hypertarget{a-request-from-start-to-finish}{%
+\subsection{A request from start to
+finish}\label{a-request-from-start-to-finish}}
+
+For an ordinary HTTP evaluation, the central flow is:
+
+\begin{center}
+\includegraphics[width=\linewidth,height=0.78\textheight,keepaspectratio]{LoadBalancer_assets/diagram-1.pdf}
+\end{center}
+
+The scheduler runs the script; the script, rather than the C++ load
+balancer, chooses a port, starts the model executable, and publishes the
+URL. The diagram groups those script actions with the backend for
+readability.
+
+In more detail, \InlineCode{CommandJobManager::requestModelAccess(name)}
+performs six steps:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \InlineCode{locator.selectJobScript(name)} chooses a script.
+\item
+  \InlineCode{job\_comm\_factory->create()} makes an independent
+  communicator.
+\item
+  \InlineCode{comm->getInitMessage()} supplies environment variables to
+  \InlineCode{job\_submitter->submit(...)}, which returns an owning job
+  pointer.
+\item
+  \InlineCode{comm->getModelUrl(job->getJobId())} waits for the URL
+  associated with that job.
+\item
+  \InlineCode{umbridge::HTTPModel(url,\space{}name)} establishes the
+  client-side model. Its constructor queries \InlineCode{/Info} to check
+  the model name and \InlineCode{/ModelInfo} to read capabilities;
+  constructing it already performs HTTP requests.
+\item
+  The job and HTTP model are moved into a \InlineCode{JobModel} returned
+  to the caller.
+\end{enumerate}
+
+The local communicator is destroyed before
+\InlineCode{requestModelAccess} returns, so its URL file is removed
+\textbf{before} the forwarded evaluation begins. The URL has already
+been consumed and the HTTP model retains the connection information. The
+filesystem is used only to discover that URL: numerical inputs and
+outputs travel over HTTP. The \InlineCode{HTTPModel} constructor uses
+its default \InlineCode{useShMem\space{}=\space{}false}, so this backend
+connection does not enable UM-Bridge's optional shared-memory transport.
+
+Each overridden method of \InlineCode{LoadBalancer} holds the returned
+model in a local \InlineCode{std::unique\_ptr}, calls the corresponding
+method, and returns its result. The return value is obtained before the
+local pointer is destroyed. Destruction releases the backend model and
+then requests scheduler cancellation.
+
+The correct unit of job creation is a \textbf{\InlineCode{LoadBalancer}
+method call}, rather than necessarily one incoming HTTP request. Size
+and capability queries also create jobs. The bundled HTTP
+\InlineCode{/ModelInfo} handler calls all four \InlineCode{Supports*}
+methods, causing four separate submissions. Its
+\InlineCode{/ApplyHessian} handler additionally calls
+\InlineCode{GetInputSizes} to check the result size, even when
+\InlineCode{error\_checks} is false.
+
+\hypertarget{startup-and-command-line-handling-in-loadbalancer.cpp}{%
+\subsection{\texorpdfstring{Startup and command-line handling in
+\InlineCode{LoadBalancer.cpp}}{Startup and command-line handling in
+LoadBalancer.cpp}}\label{startup-and-command-line-handling-in-loadbalancer.cpp}}
+
+\hypertarget{clear_urldirectory}{%
+\subsubsection{\texorpdfstring{\InlineCode{clear\_url(directory)}}{clear\_url(directory)}}\label{clear_urldirectory}}
+
+This helper returns immediately if the directory is absent. Otherwise,
+it visits its immediate entries and removes names matching
+\InlineCode{url-\textbackslash{}d+\textbackslash{}.txt}: for example,
+\InlineCode{url-123.txt}. It does not recurse, and a name containing a
+scheduler suffix, such as \InlineCode{url-123.server.txt}, does not
+match.
+
+\InlineCode{main} calls it on \InlineCode{urls} before validating
+command-line arguments. Its purpose is to prevent old URL files from
+being mistaken for newly submitted jobs. The directory therefore must
+belong to this load-balancer instance; sharing it with another active
+instance allows one startup to remove another instance's files.
+Filesystem failures are not caught here.
+
+\hypertarget{launch_hq_with_alloc_queue}{%
+\subsubsection{\texorpdfstring{\InlineCode{launch\_hq\_with\_alloc\_queue()}}{launch\_hq\_with\_alloc\_queue()}}\label{launch_hq_with_alloc_queue}}
+
+For HyperQueue, startup runs shell commands to stop a local HQ server,
+start one in the background, repeatedly query
+\InlineCode{./hq\space{}server\space{}info} until it responds, and
+execute \InlineCode{hq\_scripts/allocation\_queue.sh}.
+
+The binary location \InlineCode{./hq} and the script path are relative
+to the process's working directory. The commands use \InlineCode{\&>}
+redirection, so they assume a shell supporting that syntax;
+\InlineCode{std::system} does not itself guarantee Bash. Exit statuses
+are ignored and the readiness loop has no timeout. There is no matching
+HQ-server shutdown routine when \InlineCode{main} ends.
+
+\hypertarget{get_argargs-arg_name}{%
+\subsubsection{\texorpdfstring{\InlineCode{get\_arg(args,\space{}arg\_name)}}{\InlineCode{get\_arg(args,\space{}arg\_name)}}}\label{get_argargs-arg_name}}
+
+The helper searches for the first string beginning with
+\InlineCode{--<arg\_name>=} and having at least one character after
+\InlineCode{=}. It returns that suffix, or an empty string when no
+matching nonempty argument exists. Thus \InlineCode{--port=5000} is
+accepted, while \InlineCode{--port\space{}5000} and \InlineCode{--port=}
+are not treated as supplied values. Unrecognized arguments are not
+rejected.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.4500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.1400}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.4100}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Option
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Default
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Use
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\InlineCode{--scheduler=hyperqueue}, \InlineCode{--scheduler=slurm}, or
+\InlineCode{--scheduler=pbs} & Required & Select the submitter and
+script directory. See the PBS naming issue below. \\
+\InlineCode{--delay-ms=N} & \InlineCode{0} & Set the optional delay used
+by the submitter. \\
+\InlineCode{--port=N} & \InlineCode{4242} & Select the public
+load-balancer TCP port. \\
+\end{longtable}
+
+The two numeric options use \InlineCode{std::stoi}. Invalid or
+out-of-range conversions can throw uncaught exceptions; the code has no
+explicit range checks and does not verify that the whole string was
+consumed. A negative submission delay does not enter the
+\InlineCode{delay\space{}>\space{}0} branch.
+
+\hypertarget{mainargc-argv}{%
+\subsubsection{\texorpdfstring{\InlineCode{main(argc,\space{}argv)}}{\InlineCode{main(argc,\space{}argv)}}}\label{mainargc-argv}}
+
+After cleaning the URL directory, \InlineCode{main} reads the options
+and constructs the selected scheduler components:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2200}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.5000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2800}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Scheduler value
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Submitter class intended by the design
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Script directory
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\InlineCode{hyperqueue} & \InlineCode{HyperQueueSubmitter} &
+\InlineCode{hq\_scripts} \\
+\InlineCode{slurm} & \InlineCode{SlurmSubmitter} &
+\InlineCode{slurm\_scripts} \\
+\InlineCode{pbs} & \InlineCode{PBSSubmitter} &
+\InlineCode{pbs\_scripts} \\
+\end{longtable}
+
+Missing or unsupported scheduler values print an error and call
+\InlineCode{std::exit(-1)}. The current PBS branch spells the class
+\InlineCode{PbsSubmitter}, whereas the header declares
+\InlineCode{PBSSubmitter}; this is a compile-time error in the supplied
+source.
+
+Startup then:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Creates a \InlineCode{FilesystemCommunicatorFactory} for
+  \InlineCode{urls}, polling every 500 ms. Its constructor creates the
+  directory if needed.
+\item
+  Configures \InlineCode{JobScriptLocator} with default
+  \InlineCode{job.sh} and model-specific names
+  \InlineCode{job\_<model\_name>.sh}.
+\item
+  Moves the submitter and communicator factory into a shared
+  \InlineCode{CommandJobManager}.
+\item
+  Calls \InlineCode{getModelNames()}. This submits a real job using the
+  default script, waits for its server, calls
+  \InlineCode{umbridge::SupportedModels(url)}, and destroys that
+  temporary job before continuing. The public server is not listening
+  while this discovery job is pending.
+\item
+  Prints each model's selected script and creates one
+  \InlineCode{LoadBalancer} object per discovered model name. The
+  printed list is sorted using a copy of the names; the original
+  discovery order is retained in the model vector.
+\item
+  Builds a vector of non-owning \InlineCode{umbridge::Model*} pointers
+  into the completed \InlineCode{LB\_vector}, then calls
+  \InlineCode{umbridge::serveModels}.
+\end{enumerate}
+
+The pointer conversion adapts to the UM-Bridge server API.
+\InlineCode{LB\_vector} remains alive for the blocking server call, and
+no later insertion invalidates its element addresses.
+
+The final call is:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{umbridge}\OperatorTok{::}\NormalTok{serveModels}\OperatorTok{(}\NormalTok{LB\_ptr\_vector}\OperatorTok{,} \StringTok{"0.0.0.0"}\OperatorTok{,}\NormalTok{ port}\OperatorTok{,} \KeywordTok{true}\OperatorTok{,} \KeywordTok{false}\OperatorTok{);}
+\end{Highlighting}
+\end{Shaded}
+
+\InlineCode{0.0.0.0} binds on all IPv4 interfaces. \InlineCode{true}
+sets \InlineCode{enable\_parallel}, allowing HTTP handlers to call
+models without the library's serializing model lock. \InlineCode{false}
+sets \InlineCode{error\_checks}, disabling the checks guarded by that
+flag. Those checks would otherwise call size and capability methods and
+therefore submit extra jobs. It does not disable every check in the
+bundled library, and the load-balancer classes themselves do not
+validate numerical inputs.
+
+\hypertarget{utilities-and-command-construction-in-loadbalancer.hpp}{%
+\subsection{\texorpdfstring{Utilities and command construction in
+\InlineCode{LoadBalancer.hpp}}{Utilities and command construction in
+LoadBalancer.hpp}}\label{utilities-and-command-construction-in-loadbalancer.hpp}}
+
+\hypertarget{get_command_outputcommand}{%
+\subsubsection{\texorpdfstring{\InlineCode{get\_command\_output(command)}}{get\_command\_output(command)}}\label{get_command_outputcommand}}
+
+\InlineCode{popen(command.c\_str(),\space{}"r")} runs a shell command
+and opens its standard output for reading. A
+\InlineCode{std::unique\_ptr<FILE,\space{}decltype(\&pclose)>} couples
+the pipe to the \InlineCode{pclose} cleanup function. \InlineCode{fgets}
+reads chunks into a 128-byte buffer until no more data is available, and
+the chunks are concatenated into the returned string. The buffer limits
+each read, not the total output size.
+
+If \InlineCode{popen} cannot create the pipe, the helper throws
+\InlineCode{std::runtime\_error} with the command and \InlineCode{errno}
+description. It does not capture standard error unless the command
+redirects it, and it discards the command's exit status returned by
+\InlineCode{pclose}. It also does not inspect the stream error indicator
+when reading stops. A scheduler submission failure can therefore produce
+empty or unexpected output without an exception from this helper.
+
+\hypertarget{other-small-helpers}{%
+\subsubsection{Other small helpers}\label{other-small-helpers}}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.4700}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.5300}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Function
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Exact behavior
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\InlineCode{wait\_for\_file(file\_path,\space{}polling\_cycle)} & Check
+\InlineCode{std::filesystem::exists} repeatedly and sleep between failed
+checks. It has no timeout or scheduler-state check. \\
+\InlineCode{read\_line\_from\_file(file\_path)} & Open the file, throw
+if opening fails, then return its first line. It does not verify
+nonempty contents or successful line extraction. \\
+\InlineCode{remove\_trailing\_newline(s)} & Remove at most one final
+\InlineCode{\textbackslash{}n}; it does not trim spaces or a preceding
+\InlineCode{\textbackslash{}r}. \\
+\end{longtable}
+
+\hypertarget{command}{%
+\subsubsection{\texorpdfstring{\InlineCode{Command}}{Command}}\label{command}}
+
+This aggregate holds \InlineCode{exec}, a vector of
+\InlineCode{options}, and \InlineCode{target}. \InlineCode{addOption}
+appends an option. \InlineCode{toString} joins the executable, each
+option, and the target with spaces. For example, a \InlineCode{SlurmJob}
+constructs a command with \InlineCode{exec\space{}=\space{}"sbatch"},
+environment options, \InlineCode{--parsable}, and the script path.
+
+These are shell command fragments, not an argument vector passed
+directly to an executable. \InlineCode{Command} performs no quoting or
+escaping. Script paths and environment values containing shell syntax
+require care, and untrusted input must not be interpolated into this
+command path. The PBS environment helper provides shell quoting for its
+environment list only.
+
+\hypertarget{scheduler-jobs-and-submitters}{%
+\subsection{Scheduler jobs and
+submitters}\label{scheduler-jobs-and-submitters}}
+
+\hypertarget{job-resource-ownership}{%
+\subsubsection{\texorpdfstring{\InlineCode{Job}: resource
+ownership}{Job: resource
+ownership}}\label{job-resource-ownership}}
+
+\InlineCode{Job} is an abstract owner of a scheduler job, exposing
+\InlineCode{getJobId()}. Its virtual destructor allows correct
+destruction through a base pointer. Copy construction, move
+construction, and both assignments are deleted so two \InlineCode{Job}
+objects cannot accidentally claim the same cancellation responsibility.
+
+Ownership is transferred by moving a \InlineCode{std::unique\_ptr<Job>},
+which moves the pointer rather than the \InlineCode{Job} itself. The
+concrete constructors submit jobs; their destructors invoke scheduler
+cancellation commands. This is RAII (Resource Acquisition Is
+Initialization): a resource's lifetime follows the lifetime of its
+owning C++ object.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.1900}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.3200}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2900}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2000}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Class
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Submission
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+ID extraction
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Destruction
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\InlineCode{HyperQueueJob} &
+\InlineCode{./hq\space{}submit\space{}...\space{}--output-mode=quiet\space{}<script>}
+& Keep stdout after removing one trailing newline. &
+\InlineCode{./hq\space{}job\space{}cancel\space{}<id>} \\
+\InlineCode{SlurmJob} &
+\InlineCode{sbatch\space{}...\space{}--parsable\space{}<script>} & Match
+a numeric ID, optionally followed by \InlineCode{;<cluster>}, and keep
+the digits. & \InlineCode{scancel\space{}<id>} \\
+\InlineCode{PBSJob} & \InlineCode{qsub\space{}...\space{}<script>} &
+Match a numeric ID, optionally followed by \InlineCode{.<server>}, and
+keep the digits. & \InlineCode{qdel\space{}<id>} \\
+\end{longtable}
+
+The SLURM/PBS parsers examine output line by line, ignore nonmatching
+lines, and retain the last matching ID. Their optional suffix permits
+only letters, digits, \InlineCode{\_}, and \InlineCode{-}; PBS array IDs
+or suffixes containing additional dots do not match. No matching line
+leaves an empty ID. Discarding the suffix also means subsequent
+cancellation and URL lookup use only the numeric component.
+
+Each \InlineCode{getJobId()} simply returns the stored string. The
+destructors ignore cancellation exit codes: destruction requests
+cancellation but does not verify that the remote resources were
+released.
+
+\hypertarget{jobsubmitter-scheduling-policy-and-environment-conversion}{%
+\subsubsection{\texorpdfstring{\InlineCode{JobSubmitter}: scheduling
+policy and environment
+conversion}{JobSubmitter: scheduling
+policy and environment
+conversion}}\label{jobsubmitter-scheduling-policy-and-environment-conversion}}
+
+\InlineCode{JobSubmitter::submit(job\_script,\space{}env)} takes a
+script and a map of environment variables and returns exclusive
+ownership of the resulting \InlineCode{Job}. Its virtual destructor
+supports deletion through the interface.
+
+All three implementations store a configured delay and a mutex. For a
+positive delay, \InlineCode{submit} locks the mutex, sleeps, and then
+leaves that block. \textbf{The mutex is released before constructing the
+job and executing the submission command.} It serializes the waiting
+sections, not entire submissions, and does not enforce a strict minimum
+interval between actual scheduler command invocations.
+
+The private \InlineCode{env\_to\_options} methods generate different
+command fragments:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2600}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3500}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3900}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Submitter
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Environment encoding
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Additional behavior
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\InlineCode{HyperQueueSubmitter} & One
+\InlineCode{--env\space{}KEY=VALUE} option per map entry. & Add
+\InlineCode{--priority=-<job\_count>}; increment the count after
+creating the job. \\
+\InlineCode{SlurmSubmitter} & One
+\InlineCode{--export=ALL,KEY=VALUE,...} option. & Include the inherited
+environment via \InlineCode{ALL}. \\
+\InlineCode{PBSSubmitter} & \InlineCode{-v} followed by a single-quoted
+\InlineCode{KEY=VALUE,...} list. & Return no options for an empty map;
+escape embedded single quotes for the shell. \\
+\end{longtable}
+
+The HyperQueue priority becomes increasingly negative as the count
+increases, expressing a preference for earlier submissions.
+\InlineCode{job\_count} is atomic, so reads and increments do not race
+at the C++ memory-access level. Reading its value and later incrementing
+it are separate operations, however, so concurrent calls can generate
+the same priority. It is not a unique job identifier.
+
+PBS shell quoting preserves the list as one shell argument; it does not
+escape the comma separators of PBS's own environment-list syntax. The
+generic command builder still leaves the script path unquoted.
+
+\hypertarget{communicating-a-backend-url}{%
+\subsection{Communicating a backend
+URL}\label{communicating-a-backend-url}}
+
+\hypertarget{the-interfaces}{%
+\subsubsection{The interfaces}\label{the-interfaces}}
+
+\InlineCode{JobCommunicator} defines two phases:
+
+\begin{itemize}
+\tightlist
+\item
+  \InlineCode{getInitMessage()} returns key-value pairs supplied to the
+  job environment.
+\item
+  \InlineCode{getModelUrl(job\_id)} obtains the URL published by that
+  job.
+\end{itemize}
+
+Its copy/move operations are deleted for the same ownership reason as
+\InlineCode{Job}: each communicator owns its cleanup responsibility.
+\InlineCode{JobCommunicatorFactory} exposes \InlineCode{create()} to
+obtain a fresh owning pointer for every job, avoiding shared mutable
+per-job state.
+
+\hypertarget{filesystemcommunicator}{%
+\subsubsection{\texorpdfstring{\InlineCode{FilesystemCommunicator}}{FilesystemCommunicator}}\label{filesystemcommunicator}}
+
+The constructor stores \InlineCode{file\_dir} and the polling interval.
+\InlineCode{getInitMessage()} returns a map containing:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{UMBRIDGE\_LOADBALANCER\_COMM\_FILEDIR=\textless{}file\_dir\textgreater{}}
+\end{Highlighting}
+\end{Shaded}
+
+\InlineCode{getUrlFileName(job\_id)} forms
+\InlineCode{url-<job\_id>.txt}. \InlineCode{getModelUrl} stores the full
+path, logs it, waits for existence, and returns the first line. The
+destructor removes that path if one has been assigned. It does not
+remove the directory.
+
+\InlineCode{FilesystemCommunicatorFactory} stores the common directory
+and polling interval, creates the directory in its constructor, and
+returns a new communicator from \InlineCode{create()}. It calls
+\InlineCode{create\_directory}, not recursive
+\InlineCode{create\_directories}.
+
+\hypertarget{contract-with-a-launch-script}{%
+\subsubsection{Contract with a launch
+script}\label{contract-with-a-launch-script}}
+
+The C++ code assumes a script will:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Start a UM-Bridge server in its allocation and keep the job alive
+  while that server is needed.
+\item
+  Determine a URL reachable from the load-balancer host.
+\item
+  Publish that URL as the first line of
+  \InlineCode{\$UMBRIDGE\_LOADBALANCER\_COMM\_FILEDIR/url-<id>.txt},
+  using the same ID string returned by \InlineCode{Job::getJobId()}.
+\item
+  Keep the server running until the load balancer cancels the job.
+\end{enumerate}
+
+The reference \href{../../../umbridge/hpc/slurm_scripts/job.sh}{SLURM
+script} and \href{../../../umbridge/hpc/hq_scripts/job.sh}{HyperQueue
+script} select a free port, export \InlineCode{PORT}, start
+\InlineCode{./testmodel}, wait for an HTTP response, write the URL using
+\InlineCode{SLURM\_JOB\_ID} or \InlineCode{HQ\_JOB\_ID}, and finish with
+\InlineCode{sleep\space{}infinity}. Hardware resource requests and the
+model launch command are configured in those scripts, not in
+\InlineCode{LoadBalancer}.
+
+Both processes must resolve the URL directory to the same shared
+filesystem location. Since \InlineCode{main} supplies the relative path
+\InlineCode{urls}, the job's working directory matters. A PBS script
+must normalize its job ID consistently with \InlineCode{PBSJob}, which
+strips the server suffix. This sandbox directory currently has no
+\InlineCode{pbs\_scripts/job.sh} implementing that contract.
+
+The C++ existence check is not a complete readiness protocol. It does
+not wait for a nonempty URL, validate its format, or retry a failed HTTP
+connection. A file can become visible before the writer finishes it. A
+script that publishes a completed temporary file by renaming it can
+avoid that particular partial-file window, but the reference scripts
+currently write directly to the final path.
+
+\hypertarget{script-selection-and-model-management}{%
+\subsection{Script selection and model
+management}\label{script-selection-and-model-management}}
+
+\hypertarget{jobscriptlocator}{%
+\subsubsection{\texorpdfstring{\InlineCode{JobScriptLocator}}{JobScriptLocator}}\label{jobscriptlocator}}
+
+The public fields describe the directory, default filename, model-name
+prefix, and model-name suffix. With the values from \InlineCode{main},
+the model \InlineCode{heat} selects
+\InlineCode{<script\_dir>/job\_heat.sh} if it exists, otherwise
+\InlineCode{<script\_dir>/job.sh}.
+
+\InlineCode{selectJobScript(model\_name)} checks those paths in that
+order and throws \InlineCode{std::runtime\_error} if neither exists. It
+checks existence, not executable permission or script validity.
+\InlineCode{getDefaultJobScript()} only constructs the default path; it
+does not check existence.
+\InlineCode{printModelJobScripts(model\_names)} sorts its by-value copy
+and prints each selected path, potentially throwing if a required path
+is absent.
+
+The startup discovery job always uses the default script. Model-specific
+scripts can give known models different resources, but cannot replace
+the default discovery job. Model names are inserted directly into
+filenames and are assumed to be suitable for this naming convention.
+
+\hypertarget{jobmanager-and-commandjobmanager}{%
+\subsubsection{\texorpdfstring{\InlineCode{JobManager} and
+\InlineCode{CommandJobManager}}{JobManager and
+CommandJobManager}}\label{jobmanager-and-commandjobmanager}}
+
+\InlineCode{JobManager} abstracts two operations: discover available
+names with \InlineCode{getModelNames()}, and acquire a usable model with
+\InlineCode{requestModelAccess(name)}. The returned
+\InlineCode{std::unique\_ptr<umbridge::Model>} must own the resources
+needed for that model and release them when destroyed.
+
+\InlineCode{CommandJobManager} owns one submitter, one communicator
+factory, and a locator value. Its constructor accepts the first two
+through \InlineCode{unique\_ptr} and moves them into members. The
+acquisition procedure was described above.
+
+\InlineCode{getModelNames()} uses the same submission/communication
+mechanisms, but invokes \InlineCode{umbridge::SupportedModels(url)}
+directly rather than constructing a \InlineCode{JobModel}. The function
+returns the discovered names; its local job is destroyed first, then its
+communicator removes the URL file. It does not cache a backend or retain
+that first server for later requests.
+
+Neither operation receives model inputs or \InlineCode{config\_json}.
+Job scripts are selected by model name alone, so numerical configuration
+cannot dynamically change resource requests through this interface.
+
+\hypertarget{jobmodel-couple-a-model-to-its-job}{%
+\subsubsection{\texorpdfstring{\InlineCode{JobModel}: couple a model to
+its
+job}{JobModel: couple a model to
+its
+job}}\label{jobmodel-couple-a-model-to-its-job}}
+
+\InlineCode{JobModel} derives from \InlineCode{umbridge::Model} and
+stores both a \InlineCode{unique\_ptr<Job>} and a
+\InlineCode{unique\_ptr<umbridge::Model>}. Its constructor copies the
+wrapped model's name into the base class, then takes ownership of both
+pointers. Both are expected to refer to valid objects; the constructor
+dereferences the model pointer.
+
+All numerical, size, and capability methods delegate to the stored model
+without changing arguments or results. This repetition preserves the
+full virtual interface while adding lifetime management around it.
+
+No explicit destructor is necessary: members are destroyed in reverse
+declaration order. \InlineCode{model} is declared after
+\InlineCode{job}, so the HTTP model is destroyed first and the scheduler
+job second. A virtual destructor inherited from
+\InlineCode{umbridge::Model} makes this work when the wrapper is held as
+a base pointer.
+
+\hypertarget{the-numerical-interface-exposed-by-loadbalancer}{%
+\subsection{\texorpdfstring{The numerical interface exposed by
+\InlineCode{LoadBalancer}}{The numerical interface exposed by
+LoadBalancer}}\label{the-numerical-interface-exposed-by-loadbalancer}}
+
+The constructor stores a model name in the \InlineCode{umbridge::Model}
+base and shares the \InlineCode{JobManager} via
+\InlineCode{std::shared\_ptr}. All named load balancers therefore use
+the same submission infrastructure. The constructor itself does not
+submit a job.
+
+The numerical data use blocks:
+\InlineCode{std::vector<std::vector<double>>} represents a list of input
+or output vectors, not necessarily a rectangular matrix. For example,
+input sizes \InlineCode{\{3,\space{}1\}} describe two input blocks with
+lengths three and one. Indices such as \InlineCode{inWrt} and
+\InlineCode{outWrt} select blocks, starting at zero.
+
+Let output block \InlineCode{F\_i(x)} have length \InlineCode{m\_i}, and
+input block \InlineCode{x\_j} length \InlineCode{n\_j}. Write its
+Jacobian block as \InlineCode{J\_ij\space{}=\space{}dF\_i/dx\_j}.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.5100}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.4900}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Method
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Meaning and returned data
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\InlineCode{GetInputSizes(config\_json)} & Length of every input block
+under the supplied model configuration. \\
+\InlineCode{GetOutputSizes(config\_json)} & Length of every output block
+under that configuration. \\
+\InlineCode{Evaluate(inputs,\space{}config\_json)} & Evaluate all output
+blocks at the input blocks. \\
+\InlineCode{Gradient(outWrt,\space{}inWrt,\space{}inputs,\space{}sens,\space{}config\_json)}
+& Return \InlineCode{J\_ij\textasciicircum{}T\space{}sens}, an
+\InlineCode{n\_j}-element vector. \InlineCode{sens} has
+\InlineCode{m\_i} entries. \\
+\InlineCode{ApplyJacobian(outWrt,\space{}inWrt,\space{}inputs,\space{}vec,\space{}config\_json)}
+& Return \InlineCode{J\_ij\space{}vec}, an \InlineCode{m\_i}-element
+vector. \InlineCode{vec} has \InlineCode{n\_j} entries. \\
+\InlineCode{ApplyHessian(outWrt,\space{}inWrt1,\space{}inWrt2,\space{}inputs,\space{}sens,\space{}vec,\space{}config\_json)}
+& Apply the mixed Hessian of the scalar
+\InlineCode{sens\textasciicircum{}T\space{}F\_i(x)} to \InlineCode{vec}
+in input block \InlineCode{inWrt2}; return a vector in block
+\InlineCode{inWrt1}. \\
+\InlineCode{SupportsEvaluate()} & Report whether evaluation is
+supported. \\
+\InlineCode{SupportsGradient()} & Report whether the gradient operation
+is supported. \\
+\InlineCode{SupportsApplyJacobian()} & Report whether a Jacobian action
+is supported. \\
+\InlineCode{SupportsApplyHessian()} & Report whether a Hessian action is
+supported. \\
+\end{longtable}
+
+For the Hessian action, the relevant matrix has dimensions
+\InlineCode{n\_inWrt1\space{}\texttimes{}\space{}n\_inWrt2}.
+\InlineCode{sens} selects a weighted combination of entries in output
+block \InlineCode{outWrt}; \InlineCode{vec} supplies a direction in
+input block \InlineCode{inWrt2}.
+
+\InlineCode{config\_json} is the model-specific JSON configuration,
+defaulting to an empty object at these declarations. The load balancer
+forwards it unchanged. It does not compute derivatives, approximate
+unsupported operations, or interpret model parameters. Those
+responsibilities belong to the backend.
+
+\InlineCode{JobModel} forwards each method to an already acquired model.
+\InlineCode{LoadBalancer} first acquires a new one, then forwards the
+same method. This distinction is why every size or support method in
+\InlineCode{LoadBalancer} has scheduling cost. Although
+\InlineCode{HTTPModel} caches capability flags in its constructor, the
+load balancer constructs a new HTTP model for each of its capability
+queries.
+
+\hypertarget{concurrency-ownership-and-failures}{%
+\subsection{Concurrency, ownership, and
+failures}\label{concurrency-ownership-and-failures}}
+
+The public server can process concurrent requests because
+\InlineCode{enable\_parallel} is true. Each acquisition has its own
+communicator, scheduler job, and HTTP model; expensive model evaluations
+can therefore occupy different scheduled resources. The HPC scheduler
+decides when those resources become available. The C++ code does not
+implement its own job queue, admission limit, load metric, or worker
+reuse policy.
+
+Shared state is limited mainly to the manager's components: a
+submitter's mutex and, for HyperQueue, atomic counter. Each communicator
+has its own \InlineCode{file\_path}. Correct filesystem isolation still
+depends on IDs and paths being unique and consistent. The delay mutex is
+not held while an evaluation runs.
+
+Normal return and ordinary exception unwinding destroy owning pointers.
+If URL reading or HTTP-model construction throws after a job was
+acquired, its local \InlineCode{unique\_ptr} requests cancellation on
+the way out. Once ownership has moved into \InlineCode{JobModel},
+destruction of that wrapper performs the same cleanup.
+
+There are limits to that guarantee:
+
+\begin{itemize}
+\tightlist
+\item
+  A failed submission can leave an empty or malformed ID because command
+  exit codes and parsed IDs are not validated.
+\item
+  Waiting for a URL has no timeout, cancellation signal, or job-failure
+  check; a job that never publishes a URL can leave the request waiting
+  indefinitely.
+\item
+  A forced process termination does not run C++ destructors, and this
+  code installs no signal-driven cleanup handler.
+\item
+  Scheduler cancellation failures are ignored. The filesystem destructor
+  uses the throwing form of \InlineCode{std::filesystem::remove}; an
+  exception escaping a destructor can terminate the process.
+\item
+  The code does not catch and translate its startup failures in
+  \InlineCode{main}. Stack unwinding is not guaranteed when an exception
+  escapes \InlineCode{main}, so cleanup cannot be assumed in that case.
+  Runtime HTTP failure handling also depends on the bundled
+  UM-Bridge/HTTP library.
+\end{itemize}
+
+These are descriptions of the present implementation, rather than
+behavior added by the documentation changes.
+
+\hypertarget{building-and-extending-this-local-copy}{%
+\subsection{Building and extending this local
+copy}\label{building-and-extending-this-local-copy}}
+
+The code requires C++17 features, including
+\InlineCode{std::filesystem}, structured bindings, and class-template
+argument deduction. It relies on the bundled UM-Bridge header and its
+\InlineCode{json.hpp}/\InlineCode{httplib.h} dependencies, threads,
+POSIX process facilities, scheduler commands, and a shared URL
+directory.
+
+The sandbox copy is not currently a complete standalone deployment:
+
+\begin{itemize}
+\tightlist
+\item
+  \InlineCode{LoadBalancer.cpp} refers to \InlineCode{PbsSubmitter}, but
+  the declared class is \InlineCode{PBSSubmitter}. C++ identifiers are
+  case-sensitive, so this must be reconciled before the translation unit
+  can compile.
+\item
+  The header includes \InlineCode{"umbridge.h"}, while the
+  \InlineCode{.cpp} also includes \InlineCode{"../lib/umbridge.h"}.
+  There is no \InlineCode{sandbox/C++/lib} directory. Suitable include
+  search paths can resolve both to the bundled header:
+  \InlineCode{-Iumbridge/lib} from the workspace root resolves the
+  includes in the current layout. The relative include is not satisfied
+  by the sandbox layout alone.
+\item
+  \href{../Makefile}{\InlineCode{sandbox/C++/Makefile}} builds
+  \InlineCode{minimal-server} and \InlineCode{http-client}, not the load
+  balancer. The separate \href{../../../umbridge/hpc/Makefile}{upstream
+  HPC Makefile} provides a build recipe for its own directory layout.
+\item
+  \InlineCode{hq\_scripts}, \InlineCode{slurm\_scripts}, and
+  \InlineCode{pbs\_scripts} are absent from this sandbox
+  \InlineCode{hpc} directory. The first two have reference
+  implementations in
+  \href{../../../umbridge/hpc}{\InlineCode{umbridge/hpc}}; a compatible
+  PBS model-job script is still needed for a PBS deployment.
+\item
+  \href{LoadBalancer.pbs}{\InlineCode{LoadBalancer.pbs}} is a batch
+  launcher for the load-balancer executable, not the per-model
+  URL-publishing script. Its current invocation also omits the required
+  \InlineCode{--scheduler=...} option.
+\end{itemize}
+
+Once a working build and launch-script layout are supplied, the intended
+command syntax is, for example:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ExtensionTok{./load{-}balancer} \AttributeTok{{-}{-}scheduler}\OperatorTok{=}\NormalTok{slurm }\AttributeTok{{-}{-}port}\OperatorTok{=}\NormalTok{4242 }\AttributeTok{{-}{-}delay{-}ms}\OperatorTok{=}\NormalTok{100}
+\end{Highlighting}
+\end{Shaded}
+
+All relative paths are resolved against the launch directory, not
+automatically against the source-file directory.
+
+The interfaces expose several clear extension points:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.4000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.6000}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Desired change
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Main code to extend
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Add another scheduler & Implement \InlineCode{Job} and
+\InlineCode{JobSubmitter}, then add a branch in \InlineCode{main}. \\
+Publish URLs without a shared filesystem & Implement
+\InlineCode{JobCommunicator} and its factory, and adapt launch scripts
+to the new protocol. \\
+Give a known model different HPC resources & Supply
+\InlineCode{job\_<model\_name>.sh} in the selected script directory. \\
+Reuse backend servers & Implement a manager with an explicit
+leasing/pooling lifetime policy; preserve release-on-destruction
+behavior. \\
+Bound startup time or detect failed jobs & Extend job-state inspection
+and URL waiting with explicit failure/timeout handling. \\
+Schedule based on configuration & Extend the manager/submitter interface
+to receive the necessary configuration. \\
+\end{longtable}
+
+As written, the header has no include guard and contains
+non-\InlineCode{inline} free function definitions. Its present
+single-translation-unit use avoids some of the resulting problems; reuse
+from multiple translation units would require addressing duplicate
+inclusion/definition issues.
+
+\hypertarget{reading-the-doxygen-reference}{%
+\subsection{Reading the Doxygen
+reference}\label{reading-the-doxygen-reference}}
+
+The Doxygen comments alongside the declarations provide the API-level
+reference: parameters, return values, ownership expectations, and
+important failure conditions. This guide supplies the cross-class
+control flow and the operational context needed to understand those
+declarations together.
+
+For an HTML reference, run Doxygen from \InlineCode{sandbox/C++/hpc}
+with a configuration containing the following settings.
+\InlineCode{EXTRACT\_PRIVATE} includes the environment conversion and
+URL-filename helpers.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{PROJECT\_NAME           = "UM{-}Bridge LoadBalancer"}
+\NormalTok{OUTPUT\_DIRECTORY       = /tmp/loadbalancer{-}doxygen}
+\NormalTok{INPUT                  = LoadBalancer.hpp LoadBalancer.cpp LoadBalancer.md}
+\NormalTok{USE\_MDFILE\_AS\_MAINPAGE  = LoadBalancer.md}
+\NormalTok{EXTRACT\_ALL            = YES}
+\NormalTok{EXTRACT\_PRIVATE        = YES}
+\NormalTok{GENERATE\_HTML          = YES}
+\NormalTok{GENERATE\_LATEX         = NO}
+\end{Highlighting}
+\end{Shaded}
+
+Save that configuration as a temporary Doxyfile, run
+\InlineCode{doxygen\space{}<Doxyfile-path>}, and open
+\InlineCode{/tmp/loadbalancer-doxygen/html/index.html}. Generating
+documentation parses the sources; it does not require a successful
+executable build or submit HPC jobs.
+
+\end{document}
