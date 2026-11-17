@@ -138,10 +138,17 @@ inline void validate_direction(unsigned int index,
  * @warning Arguments must be trusted: this function does not escape shell syntax.
  * @note Standard error is not captured.
  */
-std::string get_command_output(const std::string& command) {
+[[maybe_unused]] std::string get_command_output(const std::string& command) {
     load_balancer_detail::require_text(command, "Shell command");
     // The deleter closes the pipe and waits on normal return and stack unwinding.
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), &pclose);
+    struct PipeCloser {
+        void operator()(FILE* stream) const noexcept {
+            if (stream != nullptr) {
+                (void)pclose(stream);
+            }
+        }
+    };
+    std::unique_ptr<FILE, PipeCloser> pipe(popen(command.c_str(), "r"));
 
     if (!pipe) {
         std::string error_msg = "Failed to run command: " + command + "\n"
@@ -336,7 +343,10 @@ public:
      * @brief Request cancellation with ./hq job cancel; the exit status is ignored.
      */
     ~HyperQueueJob() override {
-        std::system(("./hq job cancel " + id).c_str());
+        [[maybe_unused]] int result = std::system(("./hq job cancel " + id).c_str());
+        if (result != 0) {
+            std::cerr << "Warning: Failed to cancel the HyperQueue job; it may not have been running.\n";
+        }
     }
 
     /**
@@ -389,7 +399,10 @@ public:
      * @brief Request cancellation with scancel; the exit status is ignored.
      */
     ~SlurmJob() override {
-        std::system(("scancel " + id).c_str());
+        [[maybe_unused]] int result = std::system(("scancel " + id).c_str());
+        if (result != 0) {
+            std::cerr << "Warning: Failed to cancel the SLURM job; it may not have been running.\n";
+        }
     }
 
     /**
@@ -442,7 +455,10 @@ public:
      * @brief Request cancellation with qdel; the exit status is ignored.
      */
     ~PBSJob() override {
-        std::system(("qdel " + id).c_str());
+        [[maybe_unused]] int result = std::system(("qdel " + id).c_str());
+        if (result != 0) {
+            std::cerr << "Warning: Failed to cancel the PBS job; it may not have been running.\n";
+        }
     }
 
     /**

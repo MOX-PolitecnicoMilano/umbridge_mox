@@ -68,8 +68,10 @@ void launch_hq_with_alloc_queue() {
 
     // This affects the HQ server selected by the current environment; no server
     // ownership is retained here for automatic shutdown when main finishes.
-    std::system("./hq server stop &> /dev/null");
-
+    [[maybe_unused]] int result = std::system("./hq server stop &> /dev/null");
+    if (result != 0) {
+        std::cerr << "Warning: Failed to stop the HyperQueue server; it may not have been running.\n";
+    }
     if (std::system("./hq server start &") != 0) {
         throw std::runtime_error("Failed to start the HyperQueue server.");
     }
@@ -236,8 +238,9 @@ int main(int argc, char* argv[]) {
 
         // Jobs announce their HTTP endpoint through a shared filesystem. The factory
         // creates "urls"; each communicator polls its own job-ID file every 500 ms.
+        int num_milliseconds = 500;
         std::unique_ptr<JobCommunicatorFactory> comm_factory 
-            = std::make_unique<FilesystemCommunicatorFactory>(url_directory, std::chrono::milliseconds(500));
+            = std::make_unique<FilesystemCommunicatorFactory>(url_directory, std::chrono::milliseconds(num_milliseconds));
 
         // Prefer job_<model_name>.sh when present; otherwise use job.sh. Discovery
         // always uses job.sh because model names are not known yet.
@@ -274,7 +277,10 @@ int main(int argc, char* argv[]) {
         // model calls; error_checks=false skips optional frontend checks that would
         // otherwise launch additional jobs for capability and dimension queries.
         // The called UM-Bridge server still performs some unconditional checks.
-        umbridge::serveModels(LB_ptr_vector, "0.0.0.0", port, true, false);
+        bool enable_parallel = true;// Allow concurrent model calls
+        bool error_checks = false;// Skip optional frontend checks that would launch additional jobs
+        std::string host = "0.0.0.0";// Listen on all IPv4 interfaces
+        umbridge::serveModels(LB_ptr_vector, host, port, enable_parallel, error_checks);
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << "LoadBalancer: " << error.what() << '\n'
