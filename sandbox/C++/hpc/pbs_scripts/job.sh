@@ -11,7 +11,7 @@
 # Uncomment an optional directive above by changing ##PBS to #PBS.
 # PBS keeps separate job-specific stdout/stderr files unless site defaults or
 # qsub options override them. Shell variables are not expanded in #PBS lines.
-
+#set -x 
 set -euo pipefail
 
 fail() {
@@ -42,7 +42,7 @@ mkdir -p -- "$comm_dir"
 # module load ...
 model_command=(./testmodel) # CHANGE ME: executable plus any required arguments.
 startup_timeout_seconds=120 # Starts after PBS starts this job, not at submission.
-port_min=1024
+port_min=4243
 port_max=65535
 port_attempts=100
 
