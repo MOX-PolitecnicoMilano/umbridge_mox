@@ -1,0 +1,2 @@
+#!/bin/bash
+rm testmodel.e* testmodel.o*
