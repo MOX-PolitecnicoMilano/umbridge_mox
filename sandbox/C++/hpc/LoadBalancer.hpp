@@ -81,6 +81,12 @@ inline void validate_job_id(const std::string& id) {
     }
 }
 
+inline void validate_session_id(const std::string& session_id) {
+    if (!umbridge::IsValidSessionId(session_id)) {
+        throw std::invalid_argument("Session ID must contain 1-128 ASCII letters, digits, underscores, or hyphens.");
+    }
+}
+
 // These submitters concatenate raw paths/values into shell fragments. Reject
 // characters that need quoting rather than letting the shell reinterpret them.
 inline void validate_shell_word(const std::string& value, const std::string& description) {
@@ -357,7 +363,7 @@ public:
     std::string getJobId() const override {
         return id;
     }
-    
+
 private:
     std::string id; ///< Validated numeric scheduler ID.
 };
@@ -413,7 +419,7 @@ public:
     std::string getJobId() const override {
         return id;
     }
-    
+
 private:
     std::string id; ///< Validated numeric scheduler ID.
 };
@@ -547,7 +553,7 @@ public:
     std::string getJobId() const override {
         return id;
     }
-    
+
 private:
     std::string id; ///< Validated numeric scheduler ID.
     PBSJobLimiter::Lease job_slot; ///< Holds a concurrency slot until qdel is requested.
@@ -1040,7 +1046,7 @@ private:
 
 
 /**
- * @brief Abstract provider of exclusively owned model access on an HPC system.
+ * @brief Provider of model access and session-owned backend jobs on an HPC system.
  */
 class JobManager {
 public:
@@ -1050,11 +1056,18 @@ public:
     virtual ~JobManager() = default;
 
     /**
-     * @brief Acquire a model together with responsibility for its resources.
+     * @brief Acquire a model, reusing a backend for a nonempty client session.
      * @param model_name Name of the model to access.
-     * @return Exclusive model owner that releases its resources when destroyed.
+     * @param session_id Optional client session; empty IDs request a one-operation job.
+     * @return Shared model owner, cached until the session is explicitly released.
      */
-    virtual std::unique_ptr<umbridge::Model> requestModelAccess(const std::string& model_name) = 0;
+    virtual std::shared_ptr<umbridge::Model> requestModelAccess(
+        const std::string& model_name, const std::string& session_id) = 0;
+
+    /**
+     * @brief Release the backend owned by a client session.
+     */
+    virtual void releaseSession(const std::string& model_name, const std::string& session_id) = 0;
 
     /**
      * @brief Discover the models that the load balancer should expose.
@@ -1218,8 +1231,8 @@ private:
  * @brief Implement model access by submitting scripts and connecting over HTTP.
  *
  * The submitter selects the scheduler, the communicator factory selects the URL
- * exchange mechanism, and the locator selects scripts. Each access submits a
- * fresh job; this manager does not maintain a pool of persistent servers.
+ * exchange mechanism, and the locator selects scripts. Unsessioned operations
+ * submit a fresh job; sessioned operations reuse one job until explicitly closed.
  */
 class CommandJobManager : public JobManager {
 public:
@@ -1241,37 +1254,68 @@ public:
     }
 
     /**
-     * @brief Start a server and return a proxy that owns its scheduler job.
+     * @brief Acquire a server, starting one when the session has no backend yet.
      * @param model_name Model to select and request from the new server.
-     * @return JobModel owning both an HTTPModel proxy and the submitted Job.
-     * @note URL-file cleanup occurs before return; the job remains alive in the result.
+     * @param session_id Optional client session used to reuse a backend.
+     * @return Shared JobModel owning both an HTTPModel proxy and the submitted Job.
+     * @note URL-file cleanup occurs before return; the manager retains session jobs.
      * Submission, communication, and HTTP initialization failures propagate; local
      * owners perform their usual cleanup during stack unwinding.
      */
-    std::unique_ptr<umbridge::Model> requestModelAccess(const std::string& model_name) override {
-        std::filesystem::path job_script = locator.selectJobScript(model_name);
-        std::unique_ptr<JobCommunicator> comm = job_comm_factory->create();
-        if (!comm) {
-            throw std::runtime_error("Communicator factory returned a null communicator.");
+    std::shared_ptr<umbridge::Model> requestModelAccess(
+        const std::string& model_name, const std::string& session_id) override {
+        if (session_id.empty()) {
+            return startModel(model_name);
         }
-        std::unique_ptr<Job> job = job_submitter->submit(job_script, comm->getInitMessage());
-        if (!job) {
-            throw std::runtime_error("Job submitter returned a null job.");
+        load_balancer_detail::validate_session_id(session_id);
+
+        const auto key = std::make_pair(session_id, model_name);
+        std::shared_ptr<SessionModel> session_model;
+        {
+            std::lock_guard<std::mutex> lock(session_models_mutex);
+            auto& entry = session_models[key];
+            if (!entry) {
+                entry = std::make_shared<SessionModel>();
+            }
+            session_model = entry;
         }
-        std::string url = comm->getModelUrl(job->getJobId());
-        // Construction performs HTTP discovery and reads supported operations;
-        // publishing a URL alone therefore does not guarantee successful access.
-        auto model = std::make_unique<umbridge::HTTPModel>(url, model_name);
-        // Transfer the job to the returned proxy. The local communicator can now
-        // remove its handshake file without stopping the model server.
-        return std::make_unique<JobModel>(std::move(job), std::move(model));
+
+        std::lock_guard<std::mutex> lock(session_model->mutex);
+        if (session_model->closed) {
+            throw std::runtime_error("Cannot use a closed model session.");
+        }
+        if (!session_model->model) {
+            session_model->model = startModel(model_name);
+        }
+        return session_model->model;
+    }
+
+    void releaseSession(const std::string& model_name, const std::string& session_id) override {
+        load_balancer_detail::validate_model_name(model_name);
+        load_balancer_detail::validate_session_id(session_id);
+
+        const auto key = std::make_pair(session_id, model_name);
+        std::shared_ptr<SessionModel> session_model;
+        {
+            std::lock_guard<std::mutex> lock(session_models_mutex);
+            const auto entry = session_models.find(key);
+            if (entry == session_models.end()) {
+                return;
+            }
+            session_model = entry->second;
+            session_models.erase(entry);
+        }
+
+        std::lock_guard<std::mutex> lock(session_model->mutex);
+        session_model->closed = true;
+        session_model->model.reset();
     }
 
     /**
-     * @brief Use a temporary default-script job to discover available models.
+     * @brief Discover models and retain that server for the first model request.
      * @return Names returned by the server's /Info endpoint.
-     * @note Normal return requests job cancellation before removing the URL file;
-     * the discovery server is not reused by later model operations.
+     * @note The first backend request adopts the discovery job. If no request
+     * arrives, job lifetime is bounded by the scheduler's walltime or LB shutdown.
      */
     std::vector<std::string> getModelNames() override 
     {
@@ -1285,24 +1329,76 @@ public:
             throw std::runtime_error("Job submitter returned a null job.");
         }
         std::string url = comm->getModelUrl(job->getJobId());
-        // Materialize the names before local owners cancel the discovery job.
-        return umbridge::SupportedModels(url);
+        std::vector<std::string> model_names = umbridge::SupportedModels(url);
+        if (!model_names.empty()) {
+            std::lock_guard<std::mutex> lock(discovery_mutex);
+            if (!discovery_job) {
+                discovery_url = url;
+                discovery_job = std::move(job);
+            }
+        }
+        return model_names;
     }
     
 private:
+    struct SessionModel {
+        std::mutex mutex;
+        std::shared_ptr<umbridge::Model> model;
+        bool closed = false;
+    };
+
+    std::shared_ptr<umbridge::Model> startModel(const std::string& model_name) {
+        load_balancer_detail::validate_model_name(model_name);
+        const std::filesystem::path job_script = locator.selectJobScript(model_name);
+        std::unique_ptr<Job> job;
+        std::string url;
+        {
+            std::lock_guard<std::mutex> lock(discovery_mutex);
+            if (discovery_job && job_script == locator.getDefaultJobScript()) {
+                job = std::move(discovery_job);
+                url = std::move(discovery_url);
+            } else if (discovery_job) {
+                discovery_job.reset();
+                discovery_url.clear();
+            }
+        }
+
+        if (!job) {
+            std::unique_ptr<JobCommunicator> comm = job_comm_factory->create();
+            if (!comm) {
+                throw std::runtime_error("Communicator factory returned a null communicator.");
+            }
+            job = job_submitter->submit(job_script, comm->getInitMessage());
+            if (!job) {
+                throw std::runtime_error("Job submitter returned a null job.");
+            }
+            url = comm->getModelUrl(job->getJobId());
+        }
+
+        // Construction performs HTTP discovery and reads supported operations;
+        // publishing a URL alone therefore does not guarantee successful access.
+        auto model = std::make_unique<umbridge::HTTPModel>(url, model_name);
+        // Transfer the job to the returned proxy. The local communicator can now
+        // remove its handshake file without stopping the model server.
+        return std::make_shared<JobModel>(std::move(job), std::move(model));
+    }
+
     std::unique_ptr<JobSubmitter> job_submitter; ///< Scheduler-specific job factory.
     std::unique_ptr<JobCommunicatorFactory> job_comm_factory; ///< Per-job URL exchange factory.
     JobScriptLocator locator; ///< Default and model-specific script policy.
+    std::mutex session_models_mutex;
+    std::map<std::pair<std::string, std::string>, std::shared_ptr<SessionModel>> session_models;
+    std::mutex discovery_mutex;
+    std::unique_ptr<Job> discovery_job;
+    std::string discovery_url;
 };
 
 
 /**
- * @brief Expose one named UM-Bridge model by acquiring a job for each operation.
+ * @brief Expose one named UM-Bridge model with optional session-scoped job reuse.
  *
- * Each model operation overridden below obtains a proxy from the shared manager,
- * forwards its arguments, and releases that proxy on normal return or stack
- * unwinding. With CommandJobManager this includes a new job even for size and capability
- * queries. No result, metadata, or running-server cache is maintained here.
+ * Requests carrying the same session ID share one backend until CloseSession.
+ * Requests without a session ID retain the one-job-per-operation behavior.
  */
 class LoadBalancer : public umbridge::Model {
 public:
@@ -1322,7 +1418,7 @@ public:
 
     /**
      * @copydoc JobModel::GetInputSizes
-     * @note Acquires a fresh model owner for this call and releases it afterward.
+     * @note Reuses the backend for requests with the same session ID.
      */
     std::vector<std::size_t> GetInputSizes(const json &config_json = json::parse("{}")) const override {
         auto model = request_model();
@@ -1331,7 +1427,7 @@ public:
 
     /**
      * @copydoc JobModel::GetOutputSizes
-     * @note Acquires a fresh model owner for this call and releases it afterward.
+     * @note Reuses the backend for requests with the same session ID.
      */
     std::vector<std::size_t> GetOutputSizes(const json &config_json = json::parse("{}")) const override {
         auto model = request_model();
@@ -1340,19 +1436,18 @@ public:
 
     /**
      * @copydoc JobModel::Evaluate
-     * @note Acquires a fresh model owner for this call and releases it afterward.
+     * @note Reuses the backend for requests with the same session ID.
      */
     std::vector<std::vector<double>> Evaluate(const std::vector<std::vector<double>> &inputs, 
                                               json config_json = json::parse("{}")) override {
-        // This local owner keeps the remote server alive until the result has
-        // been obtained; destruction also requests cancellation during stack unwinding.
+        // Keep the backend alive until the result has been obtained.
         auto model = request_model();
         return model->Evaluate(inputs, config_json);
     }
 
     /**
      * @copydoc JobModel::Gradient
-     * @note Acquires a fresh model owner for this call and releases it afterward.
+     * @note Reuses the backend for requests with the same session ID.
      */
     std::vector<double> Gradient(unsigned int outWrt,
                                  unsigned int inWrt,
@@ -1366,7 +1461,7 @@ public:
 
     /**
      * @copydoc JobModel::ApplyJacobian
-     * @note Acquires a fresh model owner for this call and releases it afterward.
+     * @note Reuses the backend for requests with the same session ID.
      */
     std::vector<double> ApplyJacobian(unsigned int outWrt,
                                       unsigned int inWrt,
@@ -1380,7 +1475,7 @@ public:
 
     /**
      * @copydoc JobModel::ApplyHessian
-     * @note Acquires a fresh model owner for this call and releases it afterward.
+     * @note Reuses the backend for requests with the same session ID.
      */
     std::vector<double> ApplyHessian(unsigned int outWrt,
                                      unsigned int inWrt1,
@@ -1397,7 +1492,7 @@ public:
 
     /**
      * @copydoc JobModel::SupportsEvaluate
-     * @note Acquires a fresh model owner for this call and releases it afterward.
+     * @note Reuses the backend for requests with the same session ID.
      */
     bool SupportsEvaluate() override {
         auto model = request_model();
@@ -1405,7 +1500,7 @@ public:
     }
     /**
      * @copydoc JobModel::SupportsGradient
-     * @note Acquires a fresh model owner for this call and releases it afterward.
+     * @note Reuses the backend for requests with the same session ID.
      */
     bool SupportsGradient() override {
         auto model = request_model();
@@ -1413,7 +1508,7 @@ public:
     }
     /**
      * @copydoc JobModel::SupportsApplyJacobian
-     * @note Acquires a fresh model owner for this call and releases it afterward.
+     * @note Reuses the backend for requests with the same session ID.
      */
     bool SupportsApplyJacobian() override {
         auto model = request_model();
@@ -1421,16 +1516,23 @@ public:
     }
     /**
      * @copydoc JobModel::SupportsApplyHessian
-     * @note Acquires a fresh model owner for this call and releases it afterward.
+     * @note Reuses the backend for requests with the same session ID.
      */
     bool SupportsApplyHessian() override {
         auto model = request_model();
         return model->SupportsApplyHessian();
     }
 
+    /**
+     * @brief Release the backend associated with this model and client session.
+     */
+    void CloseSession(const std::string& session_id) override {
+        job_manager->releaseSession(name, session_id);
+    }
+
 private:
-    std::unique_ptr<umbridge::Model> request_model() const {
-        auto model = job_manager->requestModelAccess(name);
+    std::shared_ptr<umbridge::Model> request_model() const {
+        auto model = job_manager->requestModelAccess(name, umbridge::CurrentRequestSessionId());
         if (!model) {
             throw std::runtime_error("Job manager returned a null model.");
         }

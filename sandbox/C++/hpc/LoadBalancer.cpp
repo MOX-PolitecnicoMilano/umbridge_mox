@@ -2,7 +2,7 @@
  * @file LoadBalancer.cpp
  * @brief Configure and run an UM-Bridge server backed by HPC scheduler jobs.
  *
- * Startup selects a scheduler, discovers model names through a temporary job,
+ * Startup selects a scheduler, discovers model names through a bootstrap job,
  * and exposes one LoadBalancer proxy per name. See LoadBalancer.md for the
  * complete request lifecycle and the job-script communication contract.
  */
@@ -266,15 +266,15 @@ int main(int argc, char* argv[]) {
             std::move(job_submitter), std::move(comm_factory), locator);
 
 
-        // Start a temporary job, query /Info, and cancel that job when discovery
-        // returns. The names are a startup snapshot, not continuously refreshed.
+        // Discover the startup model-name snapshot. The job is kept as the
+        // bootstrap backend for the first request using the default script.
         std::vector<std::string> model_names = job_manager->getModelNames();
 
         // Inform the user about the available models and the job scripts that will be used.
         locator.printModelJobScripts(model_names);    
 
-        // Each proxy stores a name and the shared manager; it does not retain a
-        // running backend server between forwarded method calls.
+        // Each proxy stores a name and shared manager; the manager owns bootstrap
+        // and session backends independently of these proxy objects.
         std::vector<LoadBalancer> LB_vector;
         for (auto model_name : model_names) {
             LB_vector.emplace_back(model_name, job_manager);
@@ -289,7 +289,8 @@ int main(int argc, char* argv[]) {
 
         // Listen on all IPv4 interfaces. enable_parallel=true permits concurrent
         // model calls; error_checks=false skips optional frontend checks that would
-        // otherwise launch additional jobs for capability and dimension queries.
+        // otherwise add capability and dimension requests. Without a session,
+        // those extra requests can each submit another scheduler job.
         // The called UM-Bridge server still performs some unconditional checks.
         bool enable_parallel = true;// Allow concurrent model calls
         bool error_checks = false;// Skip optional frontend checks that would launch additional jobs

@@ -13,9 +13,13 @@
 
 #include <algorithm>
 #include <arpa/inet.h>
+#include <cstdint>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
+#include <random>
 #include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -115,6 +119,33 @@ void validate_blocks(const std::vector<std::vector<double>>& blocks,
   }
 }
 
+std::string create_session_id() {
+  std::random_device random;
+  std::uniform_int_distribution<std::uint32_t> distribution;
+  std::ostringstream session_id;
+  session_id << std::hex << std::setfill('0');
+  for (int i = 0; i < 4; ++i) {
+    session_id << std::setw(8) << distribution(random);
+  }
+  return session_id.str();
+}
+
+class SessionCloser {
+public:
+  explicit SessionCloser(umbridge::HTTPModel& client) : client(client) {}
+
+  ~SessionCloser() {
+    try {
+      client.CloseSession();
+    } catch (const std::exception& error) {
+      std::cerr << "http-client: failed to close model session: " << error.what() << std::endl;
+    }
+  }
+
+private:
+  umbridge::HTTPModel& client;
+};
+
 /**
  * @brief Print command syntax, the help option, and the fixed example behavior.
  * @param program Executable name displayed in the synopsis and example.
@@ -171,7 +202,8 @@ int main(int argc, char** argv) {
     // HTTPModel verifies availability and caches the model's capabilities.
     // Select the model you want to evaluate, and check that it supports the operations you need.
     std::string model_name = models[0];
-    umbridge::HTTPModel client(host, model_name);
+    umbridge::HTTPModel client(host, model_name, false, {}, create_session_id());
+    SessionCloser session_closer(client);
     if (!client.SupportsEvaluate()) {
       throw std::runtime_error(std::string("Model ") + model_name + " does not support evaluation.");
     }
@@ -212,6 +244,7 @@ int main(int argc, char** argv) {
       }
       std::cout << "Jacobian action: " << to_string(jacobian) << std::endl;
     }
+    client.CloseSession();
     return EXIT_SUCCESS;
   } catch (const std::exception& error) {
     std::cerr << "http-client: " << error.what() << '\n'

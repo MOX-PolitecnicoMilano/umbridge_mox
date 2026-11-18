@@ -13,25 +13,29 @@ method requesting model evaluations. It obtains model servers through an HPC
 scheduler and forwards operations to those servers as a UM-Bridge client. This
 is the scope described in the [UM-Bridge HPC overview](https://um-bridge-benchmarks.readthedocs.io/en/docs/umbridge/hpc.html).
 
-The implementation starts a new scheduler job each time a `LoadBalancer` method
-requests model access. The job runs a server, publishes its URL, and remains
-alive while the operation executes. C++ object destruction then requests job
-cancellation. There is no persistent pool of model servers in these files.
-With HyperQueue, several such jobs can run inside HPC allocations managed by
-HyperQueue; a HyperQueue job need not correspond to a new batch allocation.
+Startup discovers model names with a bootstrap job. If the first model request
+uses the default `job.sh`, that job is adopted rather than cancelled and replaced.
+Without a client session, later `LoadBalancer` method calls still start separate
+jobs. Clients can instead send a `UMBridge-Session` header; calls for the same
+session and model reuse one server until `POST /CloseSession`. The bundled C++
+example uses this mode so metadata, evaluations, and an optional Jacobian share
+one backend job. A model-specific `job_<name>.sh` takes precedence: the bootstrap
+job is cancelled and that script is submitted instead. With HyperQueue, jobs can
+run inside existing HPC allocations; one HyperQueue job need not correspond to
+a new batch allocation.
 
 The main division of responsibilities is:
 
 | Component | Responsibility |
 | --- | --- |
-| `LoadBalancer` | Expose the UM-Bridge model API and acquire a backend for each forwarded method call. |
-| `JobManager` / `CommandJobManager` | Combine script selection, job submission, URL discovery, and HTTP connection creation. |
+| `LoadBalancer` | Expose the UM-Bridge model API and acquire a backend per call or reuse one by session. |
+| `JobManager` / `CommandJobManager` | Combine script selection, job submission, URL discovery, HTTP connection creation, and session ownership. |
 | `JobSubmitter` and its implementations | Translate environment variables into scheduler arguments and create a `Job`. |
 | `Job` and its implementations | Hold a scheduler job identifier and cancel the job on destruction. |
 | `JobCommunicator` / `FilesystemCommunicator` | Tell a job where to publish its server URL and read it back. |
 | `JobCommunicatorFactory` / `FilesystemCommunicatorFactory` | Create a separate communicator for each submission. |
 | `JobScriptLocator` | Select a default or model-specific launch script. |
-| `JobModel` | Keep the scheduler job alive for as long as its HTTP model is used. |
+| `JobModel` | Keep the scheduler job alive for as long as its HTTP model is owned by an operation or session. |
 | `main` | Assemble the components, discover model names, and start the public server. |
 
 Most of the implementation is in the header. The `.cpp` file contains startup
@@ -46,7 +50,7 @@ than explicit includes in `LoadBalancer.hpp`.
 
 ## A request from start to finish
 
-For an ordinary HTTP evaluation, the central flow is:
+For a sessioned client workflow, the central flow is:
 
 ```mermaid
 sequenceDiagram
@@ -56,36 +60,56 @@ sequenceDiagram
     participant Scheduler
     participant Backend as Model server
     participant Files as Shared filesystem
-    Client->>LB: Evaluate(inputs, config)
-    LB->>Manager: requestModelAccess(name)
+    Client->>LB: ModelInfo / sizes / evaluations / optional Jacobian + session
+    LB->>Manager: requestModelAccess(name, session_id)
     Manager->>Scheduler: Submit selected script with URL directory
     Scheduler->>Backend: Start job and model server
     Backend->>Files: Job script writes url-ID.txt
     Manager->>Files: Poll, then read URL
     Manager->>Backend: HTTPModel discovers model and capabilities
     Manager->>Files: Communicator destruction removes URL file
-    Manager-->>LB: JobModel owning job and HTTPModel
+    Manager-->>LB: Session-owned JobModel
     LB->>Backend: Forward Evaluate through JobModel / HTTPModel
     Backend-->>LB: Model outputs
-    LB->>Scheduler: Job destruction requests cancellation
     LB-->>Client: Outputs
+    Client->>LB: POST /CloseSession
+    LB->>Manager: releaseSession(name, session_id)
+    Manager->>Scheduler: Job destruction requests cancellation
 ```
 
 The scheduler runs the script; the script, rather than the C++ load balancer,
 chooses a port, starts the model executable, and publishes the URL. The diagram
 groups those script actions with the backend for readability.
 
-In more detail, `CommandJobManager::requestModelAccess(name)` performs six steps:
+In more detail, model discovery starts a bootstrap job. The first request using
+the default script adopts it; subsequent fresh sessions submit their own jobs.
+`CommandJobManager::requestModelAccess(name, session_id)` then performs these steps:
 
-1. `locator.selectJobScript(name)` chooses a script.
-2. `job_comm_factory->create()` makes an independent communicator.
-3. `comm->getInitMessage()` supplies environment variables to
-   `job_submitter->submit(...)`, which returns an owning job pointer.
-4. `comm->getModelUrl(job->getJobId())` waits for the URL associated with that job.
-5. `umbridge::HTTPModel(url, name)` establishes the client-side model. Its
+1. `locator.selectJobScript(name)` chooses a script. If it is the default
+   `job.sh`, the request adopts the bootstrap job when available.
+2. Otherwise, `job_comm_factory->create()` makes a communicator and
+   `comm->getInitMessage()` supplies the environment to
+   `job_submitter->submit(...)`.
+3. `comm->getModelUrl(job->getJobId())` waits for a newly submitted job's URL.
+4. `umbridge::HTTPModel(url, name)` establishes the client-side model. Its
    constructor queries `/Info` to check the model name and `/ModelInfo` to read
    capabilities; constructing it already performs HTTP requests.
-6. The job and HTTP model are moved into a `JobModel` returned to the caller.
+5. The job and HTTP model are moved into a `JobModel` retained by the session
+   manager and shared with the caller. Later calls with the same session ID and
+   model reuse this proxy rather than submitting another job.
+
+The bootstrap job is retained until adopted, the LoadBalancer exits, or the
+scheduler's walltime expires. Start the client promptly after the LoadBalancer
+if you want the first client session to use that job.
+
+The client closes the session with `POST /CloseSession`, including the model
+name in the JSON body and the same session header. The bundled `HTTPModel`
+accepts an optional session ID; without one, existing clients retain the
+one-job-per-method behavior. Session IDs are 1-128 ASCII letters, digits,
+underscores, or hyphens. This session header and close endpoint are extensions
+implemented by this local server/client pair, not part of the base UM-Bridge
+protocol. The session is created lazily on the first per-model request; the
+LoadBalancer's `/Info` endpoint returns the startup model-name snapshot.
 
 The local communicator is destroyed before `requestModelAccess` returns, so its
 URL file is removed **before** the forwarded evaluation begins. The URL has
@@ -95,16 +119,17 @@ travel over HTTP. The `HTTPModel` constructor uses its default
 `useShMem = false`, so this backend connection does not enable UM-Bridge's
 optional shared-memory transport.
 
-Each overridden method of `LoadBalancer` holds the returned model in a local
-`std::unique_ptr`, calls the corresponding method, and returns its result. The
-return value is obtained before the local pointer is destroyed. Destruction
-releases the backend model and then requests scheduler cancellation.
+Each overridden method holds a shared pointer to the returned model while it
+forwards the operation. For sessioned requests the manager retains another
+owner until `/CloseSession`; for requests without a session, the local owner is
+the only one and its destruction requests scheduler cancellation.
 
-The correct unit of job creation is a **`LoadBalancer` method call**, rather than
-necessarily one incoming HTTP request. Size and capability queries also create
-jobs. The bundled HTTP `/ModelInfo` handler calls all four `Supports*` methods,
-causing four separate submissions. Its `/ApplyHessian` handler additionally
-calls `GetInputSizes` to check the result size, even when `error_checks` is false.
+Without a session, the unit of job creation is a **`LoadBalancer` method call**,
+not necessarily an incoming HTTP request. Size and capability queries also
+create jobs. The bundled HTTP `/ModelInfo` handler calls all four `Supports*`
+methods. With a session, those calls and subsequent size/evaluation requests
+all use the same backend. The `/ApplyHessian` handler additionally calls
+`GetInputSizes` to check the result size, even when `error_checks` is false.
 
 ## Startup and command-line handling in `LoadBalancer.cpp`
 
@@ -176,8 +201,8 @@ Startup then:
 3. Moves the submitter and communicator factory into a shared
    `CommandJobManager`.
 4. Calls `getModelNames()`. This submits a real job using the default script,
-   waits for its server, calls `umbridge::SupportedModels(url)`, and destroys
-   that temporary job before continuing. The public server is not listening
+   waits for its server, and calls `umbridge::SupportedModels(url)`. The manager
+   retains the job as a bootstrap backend. The public server is not listening
    while this discovery job is pending.
 5. Prints each model's selected script and creates one `LoadBalancer` object per
    discovered model name. The printed list is sorted using a copy of the names;
@@ -385,10 +410,10 @@ to be suitable for this naming convention.
 
 ### `JobManager` and `CommandJobManager`
 
-`JobManager` abstracts two operations: discover available names with
-`getModelNames()`, and acquire a usable model with `requestModelAccess(name)`.
-The returned `std::unique_ptr<umbridge::Model>` must own the resources needed for
-that model and release them when destroyed.
+`JobManager` abstracts model discovery, model acquisition, and session release.
+`requestModelAccess(name, session_id)` returns a shared model; with an empty
+session ID its local owner controls the job lifetime, while a nonempty ID causes
+the manager to retain the backend until `releaseSession(name, session_id)`.
 
 `CommandJobManager` owns one submitter, one communicator factory, and a locator
 value. Its constructor accepts the first two through `unique_ptr` and moves
@@ -396,9 +421,10 @@ them into members. The acquisition procedure was described above.
 
 `getModelNames()` uses the same submission/communication mechanisms, but invokes
 `umbridge::SupportedModels(url)` directly rather than constructing a `JobModel`.
-The function returns the discovered names; its local job is destroyed first,
-then its communicator removes the URL file. It
-does not cache a backend or retain that first server for later requests.
+It retains the submitted job and URL as a bootstrap backend. The communicator
+removes the URL file after the URL has been read; the server stays alive. The
+first request using the default script adopts that job, while a model-specific
+script cancels it and submits the selected script instead.
 
 Neither operation receives model inputs or `config_json`. Job scripts are
 selected by model name alone, so numerical configuration cannot dynamically
@@ -456,20 +482,20 @@ object at these declarations. The load balancer forwards it unchanged. It does
 not compute derivatives, approximate unsupported operations, or interpret model
 parameters. Those responsibilities belong to the backend.
 
-`JobModel` forwards each method to an already acquired model. `LoadBalancer`
-first acquires a new one, then forwards the same method. This distinction is
-why every size or support method in `LoadBalancer` has scheduling cost. Although
-`HTTPModel` caches capability flags in its constructor, the load balancer
-constructs a new HTTP model for each of its capability queries.
+`JobModel` forwards each method to its backend. `LoadBalancer` obtains that
+backend through the manager. Without a session, every size or support method
+still has scheduling cost. With a session, those requests reuse the session's
+backend; the `HTTPModel` at the client side also caches capability flags after
+the first `/ModelInfo` request.
 
 ## Concurrency, ownership, and failures
 
 The public server can process concurrent requests because `enable_parallel` is
-true. Each acquisition has its own communicator, scheduler job, and HTTP model;
-expensive model evaluations can therefore occupy different scheduled resources.
-The HPC scheduler decides when those resources become available. The C++ code
-does not implement its own job queue, admission limit, load metric, or worker
-reuse policy.
+true. Different session IDs own different backend jobs; requests carrying the
+same session ID reuse that session's model proxy. A client should use a unique
+session ID and issue calls for it sequentially. The HPC scheduler decides when
+resources become available. The C++ code does not implement its own job queue,
+admission limit, or load metric.
 
 Shared state is limited mainly to the manager's components: a submitter's mutex
 and, for HyperQueue, atomic counter. Each communicator has its own `file_path`.
@@ -478,8 +504,9 @@ consistent. The delay mutex is not held while an evaluation runs.
 
 Normal return and ordinary exception unwinding destroy owning pointers. If URL
 reading or HTTP-model construction throws after a job was acquired, its local
-`unique_ptr` requests cancellation on the way out. Once ownership has moved
-into `JobModel`, destruction of that wrapper performs the same cleanup.
+owners request cancellation on the way out. A session-owned job is cancelled
+when the client closes the session; the example does this on normal completion
+and during exception unwinding.
 
 There are limits to that guarantee:
 
@@ -488,7 +515,9 @@ There are limits to that guarantee:
 - Waiting for a URL has no timeout, cancellation signal, or job-failure check;
   a job that never publishes a URL can leave the request waiting indefinitely.
 - A forced process termination does not run C++ destructors, and this code
-  installs no signal-driven cleanup handler.
+  installs no signal-driven cleanup handler. A forcibly terminated client
+  therefore cannot send `/CloseSession`; the scheduler's job walltime is the
+  eventual backstop.
 - Scheduler cancellation failures are ignored. The filesystem destructor uses
   the throwing form of `std::filesystem::remove`; an exception escaping a
   destructor can terminate the process.
@@ -545,7 +574,7 @@ The interfaces expose several clear extension points:
 | Add another scheduler | Implement `Job` and `JobSubmitter`, then add a branch in `main`. |
 | Publish URLs without a shared filesystem | Implement `JobCommunicator` and its factory, and adapt launch scripts to the new protocol. |
 | Give a known model different HPC resources | Supply `job_<model_name>.sh` in the selected script directory. |
-| Reuse backend servers | Implement a manager with an explicit leasing/pooling lifetime policy; preserve release-on-destruction behavior. |
+| Change session lifetime | Extend the `UMBridge-Session` request header and `/CloseSession` handling; preserve one-operation behavior for clients without a session. |
 | Bound startup time or detect failed jobs | Extend job-state inspection and URL waiting with explicit failure/timeout handling. |
 | Schedule based on configuration | Extend the manager/submitter interface to receive the necessary configuration. |
 
