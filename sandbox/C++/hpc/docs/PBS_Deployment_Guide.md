@@ -546,6 +546,7 @@ the clients and tunnel accordingly.
 | `--scheduler=pbs` | Required scheduler selection | Use the local PBS submitter and `pbs_scripts` |
 | `--port=<integer>` | Default `4242`, range `1..65535` | Public login-node listener; unprivileged users normally choose a port above 1023 |
 | `--delay-ms=<integer>` | Default `0`, range `0..2147483647` on the usual 32-bit `int` platforms | Sleep before each submission |
+| `--max-pbs-jobs=<integer>` | Optional; default unlimited, range `1..2147483647` | Maximum outstanding PBS jobs owned by this process; new requests wait for a slot |
 | `--help` | Optional | Print syntax/defaults and exit without cleanup or scheduling |
 
 Use `--name=value`; the separated `--name value` form is not accepted. Unknown,
@@ -553,8 +554,13 @@ duplicate, empty, and out-of-range options are rejected before startup work.
 
 A positive delay serializes the submitter's sleep intervals but releases its
 mutex before invoking `qsub`. It is not a strict rate limiter or a maximum-job
-setting. Use PBS policies and bounded client concurrency to control the amount
-of work submitted.
+setting. For example, append `--max-pbs-jobs=8` to allow at most eight
+outstanding jobs from this load-balancer process. This includes jobs waiting in
+the PBS queue; requests wait before submitting when all slots are occupied. A
+slot is released when the owning job is destroyed, after the `qdel` command
+returns.
+This cap does not count jobs submitted by other processes or load balancers, so
+use PBS user/project policies for a cluster-wide limit.
 
 For longer sessions, use the site's approved persistent-session/service method.
 For example, where allowed, start the same foreground command inside `tmux` and

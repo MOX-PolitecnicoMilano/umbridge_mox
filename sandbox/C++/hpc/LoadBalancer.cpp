@@ -107,7 +107,8 @@ std::map<std::string, std::string> parse_arguments(const std::vector<std::string
                     + "': use --name=value, or --help.");
             }
             name = arg.substr(2, equals - 2);
-            if (name != "scheduler" && name != "delay-ms" && name != "port") {
+            if (name != "scheduler" && name != "delay-ms" && name != "max-pbs-jobs"
+                && name != "port") {
                 throw std::invalid_argument("Unknown option: --" + name);
             }
             value = arg.substr(equals + 1);
@@ -154,13 +155,16 @@ int parse_integer_option(const std::string& name, const std::string& value,
  */
 void print_help(const std::string& program) {
     std::cout << "Usage: " << program
-              << " --scheduler=<hyperqueue|slurm|pbs> [--delay-ms=<milliseconds>] [--port=<port>]\n"
+          << " --scheduler=<hyperqueue|slurm|pbs> [--delay-ms=<milliseconds>]"
+             " [--max-pbs-jobs=<count>] [--port=<port>]\n"
               << "       " << program << " --help\n\n"
               << "Run an UM-Bridge load balancer backed by HPC scheduler jobs.\n\n"
               << "Options:\n"
               << "  --scheduler=<name>  Required scheduler: hyperqueue, slurm, or pbs.\n"
               << "  --delay-ms=<ms>     Delay before each submission, from 0 to "
               << std::numeric_limits<int>::max() << " ms (default: 0).\n"
+              << "  --max-pbs-jobs=<n>  Maximum outstanding PBS jobs owned by this process; "
+                 "wait when full (default: unlimited).\n"
               << "  --port=<port>       Listening port, from 1 to 65535 (default: 4242).\n"
               << "  --help              Show this help and exit without starting jobs.\n\n"
               << "Value options use --name=value and may be specified only once.\n"
@@ -171,7 +175,8 @@ void print_help(const std::string& program) {
 /**
  * @brief Assemble scheduler services and serve the discovered UM-Bridge models.
  * @param argc Number of command-line tokens, including the executable name.
- * @param argv Tokens supporting `--scheduler=`, `--delay-ms=`, `--port=`, and `--help`.
+ * @param argv Tokens supporting `--scheduler=`, `--delay-ms=`, `--max-pbs-jobs=`,
+ * `--port=`, and `--help`.
  * @return EXIT_SUCCESS for help or a normal server return; EXIT_FAILURE on error.
  * @note Arguments are validated before filesystem cleanup or scheduler setup.
  * Startup failures are reported to standard error. Discovery must finish before
@@ -208,6 +213,15 @@ int main(int argc, char* argv[]) {
                 "delay-ms", it->second, 0, std::numeric_limits<int>::max()));
         }
 
+        std::size_t max_pbs_jobs = 0;
+        if (const auto it = options.find("max-pbs-jobs"); it != options.end()) {
+            if (scheduler != "pbs") {
+                throw std::invalid_argument("--max-pbs-jobs can only be used with --scheduler=pbs.");
+            }
+            max_pbs_jobs = static_cast<std::size_t>(parse_integer_option(
+                "max-pbs-jobs", it->second, 1, std::numeric_limits<int>::max()));
+        }
+
         // Load balancer port
         int port = 4242;
         if (const auto it = options.find("port"); it != options.end()) {
@@ -232,7 +246,7 @@ int main(int argc, char* argv[]) {
             job_submitter = std::make_unique<SlurmSubmitter>(delay);
             script_dir = "slurm_scripts";
         } else if (scheduler == "pbs") {
-            job_submitter = std::make_unique<PBSSubmitter>(delay);
+            job_submitter = std::make_unique<PBSSubmitter>(delay, max_pbs_jobs);
             script_dir = "pbs_scripts";
         }
 

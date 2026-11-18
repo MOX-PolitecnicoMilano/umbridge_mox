@@ -946,6 +946,9 @@ normally choose a port above 1023 \\
 \InlineCode{--delay-ms=<integer>} & Default \InlineCode{0}, range
 \InlineCode{0..2147483647} on the usual 32-bit \InlineCode{int}
 platforms & Sleep before each submission \\
+\InlineCode{--max-pbs-jobs=<integer>} & Optional; default unlimited,
+range \InlineCode{1..2147483647} & Maximum outstanding PBS jobs owned by
+this process; new requests wait for a slot \\
 \InlineCode{--help} & Optional & Print syntax/defaults and exit without
 cleanup or scheduling \\
 \end{longtable}
@@ -957,8 +960,14 @@ work.
 
 A positive delay serializes the submitter's sleep intervals but releases
 its mutex before invoking \InlineCode{qsub}. It is not a strict rate
-limiter or a maximum-job setting. Use PBS policies and bounded client
-concurrency to control the amount of work submitted.
+limiter or a maximum-job setting. For example, append
+\InlineCode{--max-pbs-jobs=8} to allow at most eight outstanding jobs
+from this load-balancer process. This includes jobs waiting in the PBS
+queue; requests wait before submitting when all slots are occupied. A
+slot is released when the owning job is destroyed, after the
+\InlineCode{qdel} command returns. This cap does not count jobs submitted
+by other processes or load balancers, so use PBS user/project policies
+for a cluster-wide limit.
 
 For longer sessions, use the site's approved persistent-session/service
 method. For example, where allowed, start the same foreground command

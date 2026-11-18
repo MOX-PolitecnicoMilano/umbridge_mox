@@ -13,7 +13,7 @@ public:
 
 // The model name can be changed to any string, but it must match the name used by the client to request this model.
   ExampleModel(int test_delay)
-   : umbridge::Model("testmodel"),
+   : umbridge::Model("forward"),
      test_delay(test_delay)
   {}
 

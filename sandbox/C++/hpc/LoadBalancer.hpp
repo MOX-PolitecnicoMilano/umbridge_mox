@@ -15,6 +15,8 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -417,6 +419,82 @@ private:
 };
 
 /**
+ * @brief Limit the number of PBS jobs currently owned by this load balancer.
+ * @details A zero limit disables the cap. A lease is held for each submitted
+ * job and releases one slot when the job owner is destroyed.
+ */
+class PBSJobLimiter {
+    struct State {
+        explicit State(std::size_t max_jobs) : max_jobs(max_jobs) {}
+
+        const std::size_t max_jobs;
+        std::size_t active_jobs = 0;
+        std::mutex mutex;
+        std::condition_variable slot_available;
+    };
+
+public:
+    class Lease {
+    public:
+        Lease() = default;
+        Lease(const Lease&) = delete;
+        Lease& operator=(const Lease&) = delete;
+
+        Lease(Lease&& other) noexcept : state(std::move(other.state)) {}
+
+        Lease& operator=(Lease&& other) noexcept {
+            if (this != &other) {
+                release();
+                state = std::move(other.state);
+            }
+            return *this;
+        }
+
+        ~Lease() {
+            release();
+        }
+
+    private:
+        explicit Lease(std::shared_ptr<State> state) : state(std::move(state)) {}
+
+        void release() noexcept {
+            if (state) {
+                {
+                    std::lock_guard lock(state->mutex);
+                    --state->active_jobs;
+                }
+                state->slot_available.notify_one();
+                state.reset();
+            }
+        }
+
+        std::shared_ptr<State> state;
+        friend class PBSJobLimiter;
+    };
+
+    explicit PBSJobLimiter(std::size_t max_jobs)
+        : state(std::make_shared<State>(max_jobs)) {}
+
+    Lease acquire() const {
+        if (state->max_jobs == 0) {
+            return {};
+        }
+
+        {
+            std::unique_lock lock(state->mutex);
+            state->slot_available.wait(lock, [this] {
+                return state->active_jobs < state->max_jobs;
+            });
+            ++state->active_jobs;
+        }
+        return Lease(state);
+    }
+
+private:
+    std::shared_ptr<State> state;
+};
+
+/**
  * @brief Submit a PBS batch job and request qdel when its owner is destroyed.
  */
 class PBSJob : public Job {
@@ -431,7 +509,9 @@ public:
      * The last matching line wins and the suffix is discarded. Other PBS ID formats
      * are not recognized; if no line matches, construction fails.
      */
-    PBSJob(const std::vector<std::string>& options, const std::string& target) {
+    PBSJob(const std::vector<std::string>& options, const std::string& target,
+           PBSJobLimiter::Lease job_slot = {})
+        : job_slot(std::move(job_slot)) {
         Command command {"qsub", options, target};
 
         // PBS commonly reports "<job id>.<server>"; only the numeric part is kept.
@@ -470,6 +550,7 @@ public:
     
 private:
     std::string id; ///< Validated numeric scheduler ID.
+    PBSJobLimiter::Lease job_slot; ///< Holds a concurrency slot until qdel is requested.
 };
 
 
@@ -617,8 +698,8 @@ public:
      * @brief Store the delay applied before each submission.
      * @param submission_delay Nonnegative sleep duration; zero disables it.
      */
-    PBSSubmitter(std::chrono::milliseconds submission_delay) 
-    : submission_delay(submission_delay) {
+    PBSSubmitter(std::chrono::milliseconds submission_delay, std::size_t max_jobs = 0)
+    : submission_delay(submission_delay), job_limiter(max_jobs) {
         load_balancer_detail::validate_submission_delay(submission_delay);
     }
 
@@ -634,8 +715,10 @@ public:
         }
 
         // Submit job
+        PBSJobLimiter::Lease job_slot = job_limiter.acquire();
         std::vector<std::string> options = env_to_options(env);
-        std::unique_ptr<Job> job = std::make_unique<PBSJob>(options, job_script);
+        std::unique_ptr<Job> job = std::make_unique<PBSJob>(
+            options, job_script, std::move(job_slot));
         return job;
     }
 private:
@@ -675,6 +758,7 @@ private:
     }
 
     std::chrono::milliseconds submission_delay = std::chrono::milliseconds::zero(); ///< Optional pre-submission pause.
+    PBSJobLimiter job_limiter; ///< Caps outstanding PBS jobs when configured.
     std::mutex submission_mutex; ///< Protects only the sleep interval.
 };
 

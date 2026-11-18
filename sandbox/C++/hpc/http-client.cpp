@@ -170,7 +170,7 @@ int main(int argc, char** argv) {
 
     // HTTPModel verifies availability and caches the model's capabilities.
     // Select the model you want to evaluate, and check that it supports the operations you need.
-    std::string model_name = "testmodel";
+    std::string model_name = models[0];
     umbridge::HTTPModel client(host, model_name);
     if (!client.SupportsEvaluate()) {
       throw std::runtime_error(std::string("Model ") + model_name + " does not support evaluation.");
