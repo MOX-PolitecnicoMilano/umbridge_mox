@@ -492,6 +492,7 @@ public:
                 return state->active_jobs < state->max_jobs;
             });
             ++state->active_jobs;
+            std::cout << "PBSJobLimiter: Acquired slot for job. Active jobs: " << state->active_jobs << std::endl;  
         }
         return Lease(state);
     }

@@ -5,7 +5,9 @@
 #PBS -l walltime=00:05:00
 ##PBS -q CHANGE_ME_QUEUE
 ##PBS -A CHANGE_ME_PROJECT
-
+# set PBS output to /dev/null to avoid creating a job-specific stdout/stderr file.
+#PBS -o /dev/null
+#PBS -e /dev/null
 # PBS Professional/OpenPBS example for a LoadBalancer running on a login node.
 # CHANGE ME: adapt queue/account, resources, walltime, modules and model command.
 # Uncomment an optional directive above by changing ##PBS to #PBS.
@@ -13,7 +15,7 @@
 # qsub options override them. Shell variables are not expanded in #PBS lines.
 #set -x 
 set -euo pipefail
-
+export TEST_DELAY=5000
 fail() {
     printf 'job.sh: %s\n' "$*" >&2
     exit 1
