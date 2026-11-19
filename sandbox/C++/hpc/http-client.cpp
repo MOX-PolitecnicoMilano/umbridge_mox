@@ -213,7 +213,7 @@ using ModelInput = std::vector<std::vector<double>>;
  * @brief Evaluate one input in an independently owned model session.
  * @param host Validated server origin, normally pointing to the load balancer.
  * @param model_name Name of the model to evaluate, currently "forward".
- * @param inputs Input blocks owned by this worker, passed by value.
+ * @param inputs Input blocks owned by this worker; each inner vector contains one model input block.
  * @param i Zero-based job index used only for progress diagnostics.
  * @return Validated output blocks after successful explicit session closure.
  * @throws std::runtime_error If evaluation is unsupported, metadata or block
@@ -223,7 +223,7 @@ using ModelInput = std::vector<std::vector<double>>;
  * Exceptions are transported to main() through the asynchronous task's future.
  */
 ModelOutput evaluate_job(const std::string &host, const std::string &model_name,
-                         ModelInput inputs, std::size_t i) {
+                         ModelInput const &inputs, std::size_t i) {
   // Workers can log concurrently. osyncstream emits each message as one unit.
   std::osyncstream(std::cout) << "Creating client " << i << std::endl;
   // Construct inside the task: no HTTP client is shared or moved in a growing
