@@ -1,7 +1,11 @@
 /**
  * @file http-client.cpp
  * @brief Evaluate independent UM-Bridge sessions concurrently.
- * Each worker owns its HTTPModel and closes its session after evaluation.
+ * @details main() launches one asynchronous evaluate_job() per input, collects
+ * every result by job index, then prints outputs after all workers finish.
+ * Each worker owns an HTTPModel and a SessionCloser; its backend session is
+ * released independently of when the main thread consumes the worker's future.
+ * See docs/http-client.tex for the architecture and scheduler interaction.
  */
 // Enable HTTPS in the bundled HTTP client; link with OpenSSL when building.
 #define CPPHTTPLIB_OPENSSL_SUPPORT
@@ -127,6 +131,14 @@ void validate_blocks(const std::vector<std::vector<double>> &blocks,
   }
 }
 
+/**
+ * @brief Generate a random identifier for an independent model session.
+ * @return A 32-character lowercase hexadecimal string, including leading zeros.
+ * @details Four independently drawn 32-bit values provide 128 random bits.
+ * Collisions are unlikely but uniqueness is not guaranteed. All generator state
+ * is local to this call, so workers do not share a random-number engine.
+ * @throws std::exception If the random source or string allocation fails.
+ */
 std::string create_session_id() {
   std::random_device random;
   std::uniform_int_distribution<std::uint32_t> distribution;
@@ -138,13 +150,47 @@ std::string create_session_id() {
   return session_id.str();
 }
 
+/**
+ * @brief Scope guard that attempts to close a borrowed HTTPModel's session.
+ * @details Declare the guard after the model so reverse destruction order keeps
+ * the model alive during cleanup. The guard also runs when evaluation throws.
+ * Copying is forbidden to avoid duplicate guards for the same session.
+ * @note Move operations are not implicitly generated because the class declares
+ * a destructor and copy operations. A defaulted move constructor would leave
+ * both guards bound to the same model: destroying the source could close the
+ * session while the destination still needs it. A defaulted move assignment
+ * would be deleted because a reference member cannot be rebound. Keep this
+ * stack-local guard nonmovable; safe ownership transfer would require custom
+ * move operations that disarm the source, rather than defaulted operations.
+ * @note This guard owns neither the model nor its scheduler job. Closing the
+ * session asks the load balancer to release its backend job. Forced process
+ * termination does not run this destructor.
+ */
 class SessionCloser {
 public:
+  /**
+   * @brief Bind cleanup to an existing model without sending a request.
+   * @param client Model whose session should be closed when this scope ends.
+   * @pre client must outlive this guard.
+   */
   explicit SessionCloser(umbridge::HTTPModel &client) : client(client) {}
 
-  SessionCloser(const SessionCloser &) = delete;
-  SessionCloser &operator=(const SessionCloser &) = delete;
+  /** @brief Disable copying to prevent duplicate session-cleanup owners.
+   * @param other Guard that cannot be copied.
+   */
+  SessionCloser(const SessionCloser &other) = delete;
+  /** @brief Disable assignment to keep the original model binding.
+   * @param other Guard that cannot be assigned.
+   * @return No value; this operation is deleted.
+   */
+  SessionCloser &operator=(const SessionCloser &other) = delete;
 
+  /**
+   * @brief Attempt session cleanup on normal return or exception unwinding.
+   * @details Reports standard exceptions to stderr instead of propagating them.
+   * After a successful explicit CloseSession(), this call is a no-op in the
+   * local UM-Bridge implementation. If explicit closure failed, it retries.
+   */
   ~SessionCloser() {
     try {
       client.CloseSession();
@@ -155,31 +201,49 @@ public:
   }
 
 private:
-  umbridge::HTTPModel &client;
+  umbridge::HTTPModel &client; ///< Borrowed model; must outlive the guard.
 };
 
+/// @brief Output blocks; each inner vector contains one model output block.
 using ModelOutput = std::vector<std::vector<double>>;
+/// @brief Input blocks; each inner vector contains one model input block.
 using ModelInput = std::vector<std::vector<double>>;
 
-// Each task owns its model on its own stack. No HTTP client is shared between
-// threads and the guard is destroyed before the model, including on failure.
+/**
+ * @brief Evaluate one input in an independently owned model session.
+ * @param host Validated server origin, normally pointing to the load balancer.
+ * @param model_name Name of the model to evaluate, currently "forward".
+ * @param inputs Input blocks owned by this worker, passed by value.
+ * @param i Zero-based job index used only for progress diagnostics.
+ * @return Validated output blocks after successful explicit session closure.
+ * @throws std::runtime_error If evaluation is unsupported, metadata or block
+ * dimensions are incompatible, or a model operation or session closure fails.
+ * @throws std::exception If session-ID creation or model construction fails.
+ * @note Prints progress messages, but leaves numerical result printing to main().
+ * Exceptions are transported to main() through the asynchronous task's future.
+ */
 ModelOutput evaluate_job(const std::string &host, const std::string &model_name,
                          ModelInput inputs, std::size_t i) {
+  // Workers can log concurrently. osyncstream emits each message as one unit.
   std::osyncstream(std::cout) << "Creating client " << i << std::endl;
+  // Construct inside the task: no HTTP client is shared or moved in a growing
+  // vector. The unique session ID keeps this worker's backend independent.
   umbridge::HTTPModel client(host, model_name, false, httplib::Headers(),
                              create_session_id());
+  // Reverse destruction order guarantees the guard runs while client is alive.
   SessionCloser session_closer(client);
   std::osyncstream(std::cout) << "Created client " << i << std::endl;
   if (!client.SupportsEvaluate()) {
     throw std::runtime_error("Model " + model_name + " does not support evaluation.");
   }
 
+  // Query dimensions for the same default configuration used by Evaluate().
+  // Reusing this client/session makes all requests target the same backend.
   const auto input_sizes = client.GetInputSizes();
   const auto output_sizes = client.GetOutputSizes();
   if (output_sizes.empty()) {
     throw std::runtime_error("Model 'forward' must declare an output block.");
   }
-  // ModelInput inputs = {{100.0 + static_cast<double>(i), 18.0}};
   validate_blocks(inputs, input_sizes, "Default evaluation input");
   auto outputs = client.Evaluate(inputs);
   validate_blocks(outputs, output_sizes, "Default evaluation output");
@@ -188,6 +252,10 @@ ModelOutput evaluate_job(const std::string &host, const std::string &model_name,
   return outputs;
 }
 
+/**
+ * @brief Print command syntax, defaults, and concurrent evaluation behavior.
+ * @param program Executable name to include in the usage and example commands.
+ */
 void print_help(const std::string &program) {
   std::cout << "Usage: " << program << " <address> [num_jobs]\n"
             << "       " << program << " --help\n\n"
@@ -200,6 +268,20 @@ void print_help(const std::string &program) {
             << "Example: " << program << " http://localhost:4242 50\n";
 }
 
+/**
+ * @brief Launch independent evaluations, collect their results, and print them.
+ * @param argc Number of command-line tokens, including the executable name.
+ * @param argv Server origin and optional positive job count, or --help.
+ * @return EXIT_SUCCESS for help or when every job succeeds; EXIT_FAILURE for
+ * argument/launch errors or any failed job.
+ * @details All tasks are launched before result collection begins. Every future
+ * is observed even after a job fails. Successful numerical results are printed
+ * in job order only after every worker has finished. Progress and error messages
+ * may appear earlier. Job i receives input {{100+i, 18}}.
+ * @note Exceptions from argument parsing and task launch are reported here;
+ * worker exceptions are handled separately for each future. No exception is
+ * intentionally propagated to the caller.
+ */
 int main(int argc, char **argv) {
   try {
     if (argc == 2 && std::string(argv[1]) == "--help") {
@@ -230,6 +312,9 @@ int main(int argc, char **argv) {
     const std::string model_name = "forward";
     std::vector<std::future<ModelOutput>> jobs;
     jobs.reserve(num_jobs);
+    // launch::async requires concurrent execution rather than deferred calls
+    // from get(). Arguments are copied into each task, so the loop's inputs can
+    // go out of scope safely. Futures store results/exceptions, not HTTPModels.
     for (int i = 0; i < num_jobs; ++i) {
       ModelInput inputs = {{100.0 + static_cast<double>(i), 18.0}};
       jobs.emplace_back(std::async(std::launch::async, evaluate_job,
@@ -238,10 +323,14 @@ int main(int argc, char **argv) {
 
     // Keep results indexed by job, even though jobs finish out of order.
     // Observe every future so one failure does not hide other job failures.
+    // Waiting for job 0 first does not serialize workers: all are already running
+    // and each closes its own session without waiting for this collection loop.
     std::vector<ModelOutput> outputs(num_jobs);
     bool failed = false;
     for (int i = 0; i < num_jobs; ++i) {
       try {
+        // get() waits if needed, transfers the result, or rethrows the worker's
+        // exception. Each future is consumed exactly once by the main thread.
         outputs[i] = jobs[i].get();
       } catch (const std::exception &error) {
         std::osyncstream(std::cerr) << "Job " << i << " failed: "
@@ -249,8 +338,11 @@ int main(int argc, char **argv) {
         failed = true;
       }
     }
-    // All futures have been observed: every worker has finished and closed its
-    // session. Print successful results only now, including every output block.
+    // All futures have been observed: every worker has finished and attempted
+    // session cleanup. Successful workers have explicitly closed their sessions.
+    // Only main accesses outputs, so this vector needs no mutex. A failed job's
+    // entry stays empty; successful jobs must have at least one output block.
+    // Print successful results only now, including every output block.
     for (int i = 0; i < num_jobs; ++i) {
       if (outputs[i].empty()) {
         continue; // Failed jobs were reported above and have no result.
