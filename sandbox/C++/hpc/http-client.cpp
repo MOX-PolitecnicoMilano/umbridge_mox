@@ -1,12 +1,7 @@
 /**
  * @file http-client.cpp
- * @brief Demonstrate evaluation and an optional Jacobian action through
- * UM-Bridge.
- *
- * Connects to the supplied server, lists its models, and accesses "forward".
- * The example uses input {{100.0, 18.0}}, then repeats the evaluation with
- * level=1 and vtk_output=true. Model-specific parameters are intentionally
- * fixed.
+ * @brief Evaluate independent UM-Bridge sessions concurrently.
+ * Each worker owns its HTTPModel and closes its session after evaluation.
  */
 // Enable HTTPS in the bundled HTTP client; link with OpenSSL when building.
 #define CPPHTTPLIB_OPENSSL_SUPPORT
@@ -17,6 +12,7 @@
 #include <arpa/inet.h>
 #include <cstdint>
 #include <cstdlib>
+#include <future>
 #include <iomanip>
 #include <iostream>
 #include <random>
@@ -24,6 +20,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <syncstream>
 #include <vector>
 
 /**
@@ -145,11 +142,14 @@ class SessionCloser {
 public:
   explicit SessionCloser(umbridge::HTTPModel &client) : client(client) {}
 
+  SessionCloser(const SessionCloser &) = delete;
+  SessionCloser &operator=(const SessionCloser &) = delete;
+
   ~SessionCloser() {
     try {
       client.CloseSession();
     } catch (const std::exception &error) {
-      std::cerr << "http-client: failed to close model session: "
+      std::osyncstream(std::cerr) << "http-client: failed to close model session: "
                 << error.what() << std::endl;
     }
   }
@@ -158,109 +158,103 @@ private:
   umbridge::HTTPModel &client;
 };
 
-/**
- * @brief Print command syntax, the help option, and the fixed example behavior.
- * @param program Executable name displayed in the synopsis and example.
- */
-void print_help(const std::string &program) {
-  std::cout
-      << "Usage: " << program << " <address>\n"
-      << "       " << program << " --help\n\n"
-      << "Arguments:\n"
-      << "  <address>  UM-Bridge server: http://host[:port], "
-         "https://host[:port],\n"
-      << "             or host[:port] (HTTP). Ports must be 1 through 65535.\n"
-      << "             Default ports are 80 for HTTP and 443 for HTTPS.\n"
-      << "             Use brackets around IPv6 addresses when specifying a "
-         "port.\n"
-      << "             Do not include credentials, a path, a query, or a "
-         "fragment.\n\n"
-      << "Options:\n"
-      << "  --help     Show this help and exit without connecting to a "
-         "server.\n\n"
-      << "Lists supported models and evaluates 'forward' with input [100, "
-         "18].\n"
-      << "Repeats evaluation with level=1 and vtk_output=true. If supported,\n"
-      << "applies the Jacobian to [1, 4] using input and output block zero.\n\n"
-      << "Example: " << program << " http://localhost:4242\n";
+using ModelOutput = std::vector<std::vector<double>>;
+using ModelInput = std::vector<std::vector<double>>;
+
+// Each task owns its model on its own stack. No HTTP client is shared between
+// threads and the guard is destroyed before the model, including on failure.
+ModelOutput evaluate_job(const std::string &host, const std::string &model_name,
+                         ModelInput inputs, std::size_t i) {
+  std::osyncstream(std::cout) << "Creating client " << i << std::endl;
+  umbridge::HTTPModel client(host, model_name, false, httplib::Headers(),
+                             create_session_id());
+  SessionCloser session_closer(client);
+  std::osyncstream(std::cout) << "Created client " << i << std::endl;
+  if (!client.SupportsEvaluate()) {
+    throw std::runtime_error("Model " + model_name + " does not support evaluation.");
+  }
+
+  const auto input_sizes = client.GetInputSizes();
+  const auto output_sizes = client.GetOutputSizes();
+  if (output_sizes.empty()) {
+    throw std::runtime_error("Model 'forward' must declare an output block.");
+  }
+  // ModelInput inputs = {{100.0 + static_cast<double>(i), 18.0}};
+  validate_blocks(inputs, input_sizes, "Default evaluation input");
+  auto outputs = client.Evaluate(inputs);
+  validate_blocks(outputs, output_sizes, "Default evaluation output");
+  std::osyncstream(std::cout) << "Job " << i << " output: "
+                             << to_string(outputs[0]) << std::endl;
+  // Release the PBS slot in this worker, before waiting for any other job.
+  client.CloseSession();
+  return outputs;
 }
 
-/**
- * @brief Run the fixed UM-Bridge client example, or display help.
- * @param argc Number of command-line tokens, including the executable name.
- * @param argv Executable name followed by one server address or --help.
- * @return EXIT_SUCCESS after help or successful model operations; EXIT_FAILURE
- * for invalid arguments, incompatible model metadata, or communication errors.
- * @note Exceptions are reported to standard error. Arguments are checked before
- * connecting; model dimensions are checked using each evaluation's
- * configuration.
- */
+void print_help(const std::string &program) {
+  std::cout << "Usage: " << program << " <address> [num_jobs]\n"
+            << "       " << program << " --help\n\n"
+            << "Evaluate 'forward' in independent concurrent sessions.\n"
+            << "  <address>  HTTP/HTTPS origin, or host[:port], without a path.\n"
+            << "  num_jobs   Positive number of jobs (default: 5).\n\n"
+            << "Job i uses input [100+i, 18]. Outputs are printed as they arrive\n"
+            << "and collected in job order. LoadBalancer's --max-pbs-jobs limits\n"
+            << "the number of outstanding backend PBS jobs.\n\n"
+            << "Example: " << program << " http://localhost:4242 50\n";
+}
+
 int main(int argc, char **argv) {
   try {
-    if (argc != 2) {
-      throw std::invalid_argument(
-          "Expected exactly one server address, or --help.");
-    }
-    const std::string host = argv[1];
-    if (host == "--help") {
+    if (argc == 2 && std::string(argv[1]) == "--help") {
       print_help(argv[0]);
       return EXIT_SUCCESS;
     }
+    if (argc != 2 && argc != 3) {
+      throw std::invalid_argument("Expected a server address and optional num_jobs.");
+    }
+    const std::string host = argv[1];
     if (!host.empty() && host.front() == '-') {
       throw std::invalid_argument("Unknown option: " + host);
     }
     validate_address(host);
+    int num_jobs = 5;
+    if (argc == 3) {
+      const std::string count = argv[2];
+      if (count.empty() || count.find_first_not_of("0123456789") != std::string::npos) {
+        throw std::invalid_argument("num_jobs must be a positive integer.");
+      }
+      num_jobs = std::stoi(count);
+      if (num_jobs < 1) {
+        throw std::invalid_argument("num_jobs must be a positive integer.");
+      }
+    }
     std::cout << "Connecting to host " << host << std::endl;
 
-    // Discovery is kept separate so the complete model list is still printed.
-    const std::vector<std::string> models = {"forward"};
-
-    // HTTPModel verifies availability and caches the model's capabilities.
-    // Select the model you want to evaluate, and check that it supports the
-    // operations you need.
-    std::string model_name = models[0];
-    // Launch a number of different jobs to test the server's ability to handle multiple sessions. The server may
-    const int num_jobs=20;
-    std::vector<umbridge::HTTPModel> clients;
-    std::vector<SessionCloser> session_closers;
-    for (std::size_t i = 0; i < num_jobs; ++i) {
-      std::cout << "Creating client " << i << std::endl;
-      clients.emplace_back(umbridge::HTTPModel{host, model_name, false, {}, create_session_id()});
-      std::cout << "Created client " << i << std::endl;
-      session_closers.emplace_back(clients.back());
-    }
-    for (std::size_t i = 0; i < 20; ++i) {
-      umbridge::HTTPModel & client=clients[i];
-      SessionCloser & session_closer=session_closers[i];
-      std::cout << "Using model " << model_name << std::endl;
-      if (!client.SupportsEvaluate()) {
-        throw std::runtime_error(std::string("Model ") + model_name +
-                                 " does not support evaluation.");
-      }
-
-      // Reuse the default metadata for validation and the optional Jacobian
-      // call.
-      const auto input_sizes = client.GetInputSizes();
-      const auto output_sizes = client.GetOutputSizes();
-      if (output_sizes.empty()) {
-        throw std::runtime_error(
-            "Model 'forward' must declare an output block for this example.");
-      }
-
-      std::vector<std::vector<double>> inputs{{100.0 + i, 18.0}};
-      validate_blocks(inputs, input_sizes, "Default evaluation input");
-
-      const auto outputs = client.Evaluate(inputs);
-      validate_blocks(outputs, output_sizes, "Default evaluation output");
-      // The metadata and result checks above guarantee that block zero exists.
-      std::cout << "Output: " << to_string(outputs[0]) << std::endl;
-      client.CloseSession();
+    const std::string model_name = "forward";
+    std::vector<std::future<ModelOutput>> jobs;
+    jobs.reserve(num_jobs);
+    for (int i = 0; i < num_jobs; ++i) {
+      ModelInput inputs = {{100.0 + static_cast<double>(i), 18.0}};
+      jobs.emplace_back(std::async(std::launch::async, evaluate_job,
+                                   host, model_name, inputs, i));
     }
 
-    return EXIT_SUCCESS;
+    // Keep results indexed by job, even though jobs finish out of order.
+    // Observe every future so one failure does not hide other job failures.
+    std::vector<ModelOutput> outputs(num_jobs);
+    bool failed = false;
+    for (int i = 0; i < num_jobs; ++i) {
+      try {
+        outputs[i] = jobs[i].get();
+      } catch (const std::exception &error) {
+        std::osyncstream(std::cerr) << "Job " << i << " failed: "
+                                   << error.what() << std::endl;
+        failed = true;
+      }
+    }
+    return failed ? EXIT_FAILURE : EXIT_SUCCESS;
   } catch (const std::exception &error) {
-    std::cerr << "http-client: " << error.what() << '\n'
-              << "Use --help for command syntax and options." << std::endl;
+    std::osyncstream(std::cerr) << "http-client: " << error.what() << '\n'
+                               << "Use --help for command syntax and options." << std::endl;
     return EXIT_FAILURE;
   }
 }

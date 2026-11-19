@@ -217,7 +217,8 @@ element addresses.
 The final call is:
 
 ```cpp
-umbridge::serveModels(LB_ptr_vector, "0.0.0.0", port, true, false);
+umbridge::serveModels(LB_ptr_vector, "0.0.0.0", port, true, false,
+                      [] { return new SchedulerTaskQueue; });
 ```
 
 `0.0.0.0` binds on all IPv4 interfaces. `true` sets `enable_parallel`, allowing
@@ -494,8 +495,44 @@ The public server can process concurrent requests because `enable_parallel` is
 true. Different session IDs own different backend jobs; requests carrying the
 same session ID reuse that session's model proxy. A client should use a unique
 session ID and issue calls for it sequentially. The HPC scheduler decides when
-resources become available. The C++ code does not implement its own job queue,
-admission limit, or load metric.
+resources become available. `--max-pbs-jobs=N` additionally limits the number of
+outstanding PBS jobs owned by this balancer, including queued jobs. The slot is
+released after the session's job cancellation is requested. Zero disables this
+limit.
+
+The C++ example creates an independent `HTTPModel` inside each asynchronous
+worker. Each worker creates its session, checks metadata, evaluates its own
+input, and closes its session before returning its result. For example, run
+these commands in separate terminals from `sandbox/C++/test`, with the fake PBS
+commands on `PATH`:
+
+```sh
+PATH="../hpc/bin:$PATH" ./LoadBalancer --scheduler=pbs --max-pbs-jobs=20
+./http-client http://localhost:4242 50
+```
+
+The client requests 50 independent jobs. At most 20 backend jobs are outstanding
+at once; completed sessions free slots for waiting workers. The fake scheduler's
+`MAX_JOBS` can further limit how many of those jobs actually run. The client
+prints results with their job indices as evaluations finish and collects results
+in job order in `outputs`. With no job-count argument, it requests five jobs.
+Each client worker owns its model and cleanup guard on its stack, so growing a
+vector of futures cannot invalidate model references or close another session.
+
+`SchedulerTaskQueue` gives each accepted HTTP connection its own asynchronous
+task and reaps completed tasks as new connections arrive. This prevents a fixed
+HTTP worker pool from filling with requests waiting for PBS slots, which would
+otherwise block evaluation and `/CloseSession` requests needed to release slots.
+The PBS cap controls backend jobs; frontend thread usage scales with concurrent
+clients and connections. Other users of `serveModels` keep the default HTTP pool
+unless they supply the optional task-queue factory.
+
+The integration regression `hpc/tests/parallel_sessions.py` runs isolated fake
+PBS jobs, checks all outputs and overlapping evaluation intervals, and verifies
+progress with more sessions than scheduler slots and a nominal HTTP pool of two.
+Run `make test-parallel` from `hpc`, or use
+`python3 tests/parallel_sessions.py --jobs 6 --limit 2 --fail-job` to check that
+an invalid result from one job still closes its session and lets other jobs finish.
 
 Shared state is limited mainly to the manager's components: a submitter's mutex
 and, for HyperQueue, atomic counter. Each communicator has its own `file_path`.

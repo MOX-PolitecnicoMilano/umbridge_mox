@@ -295,7 +295,8 @@ int main(int argc, char* argv[]) {
         bool enable_parallel = true;// Allow concurrent model calls
         bool error_checks = false;// Skip optional frontend checks that would launch additional jobs
         std::string host = "0.0.0.0";// Listen on all IPv4 interfaces
-        umbridge::serveModels(LB_ptr_vector, host, port, enable_parallel, error_checks);
+        umbridge::serveModels(LB_ptr_vector, host, port, enable_parallel, error_checks,
+                              [] { return new SchedulerTaskQueue; });
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << "LoadBalancer: " << error.what() << '\n'
