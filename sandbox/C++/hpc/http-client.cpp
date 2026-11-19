@@ -226,6 +226,7 @@ int main(int argc, char **argv) {
     for (std::size_t i = 0; i < num_jobs; ++i) {
       std::cout << "Creating client " << i << std::endl;
       clients.emplace_back(umbridge::HTTPModel{host, model_name, false, {}, create_session_id()});
+      std::cout << "Created client " << i << std::endl;
       session_closers.emplace_back(clients.back());
     }
     for (std::size_t i = 0; i < 20; ++i) {
