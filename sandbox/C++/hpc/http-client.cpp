@@ -183,8 +183,6 @@ ModelOutput evaluate_job(const std::string &host, const std::string &model_name,
   validate_blocks(inputs, input_sizes, "Default evaluation input");
   auto outputs = client.Evaluate(inputs);
   validate_blocks(outputs, output_sizes, "Default evaluation output");
-  std::osyncstream(std::cout) << "Job " << i << " output: "
-                             << to_string(outputs[0]) << std::endl;
   // Release the PBS slot in this worker, before waiting for any other job.
   client.CloseSession();
   return outputs;
@@ -196,8 +194,8 @@ void print_help(const std::string &program) {
             << "Evaluate 'forward' in independent concurrent sessions.\n"
             << "  <address>  HTTP/HTTPS origin, or host[:port], without a path.\n"
             << "  num_jobs   Positive number of jobs (default: 5).\n\n"
-            << "Job i uses input [100+i, 18]. Outputs are printed as they arrive\n"
-            << "and collected in job order. LoadBalancer's --max-pbs-jobs limits\n"
+            << "Job i uses input [100+i, 18]. Outputs are collected and printed\n"
+            << "in job order after all jobs finish. LoadBalancer's --max-pbs-jobs limits\n"
             << "the number of outstanding backend PBS jobs.\n\n"
             << "Example: " << program << " http://localhost:4242 50\n";
 }
@@ -250,6 +248,21 @@ int main(int argc, char **argv) {
                                    << error.what() << std::endl;
         failed = true;
       }
+    }
+    // All futures have been observed: every worker has finished and closed its
+    // session. Print successful results only now, including every output block.
+    for (int i = 0; i < num_jobs; ++i) {
+      if (outputs[i].empty()) {
+        continue; // Failed jobs were reported above and have no result.
+      }
+      std::cout << "Job " << i << " output: ";
+      for (std::size_t block = 0; block < outputs[i].size(); ++block) {
+        if (block != 0) {
+          std::cout << " | ";
+        }
+        std::cout << to_string(outputs[i][block]);
+      }
+      std::cout << '\n';
     }
     return failed ? EXIT_FAILURE : EXIT_SUCCESS;
   } catch (const std::exception &error) {

@@ -514,8 +514,8 @@ PATH="../hpc/bin:$PATH" ./LoadBalancer --scheduler=pbs --max-pbs-jobs=20
 The client requests 50 independent jobs. At most 20 backend jobs are outstanding
 at once; completed sessions free slots for waiting workers. The fake scheduler's
 `MAX_JOBS` can further limit how many of those jobs actually run. The client
-prints results with their job indices as evaluations finish and collects results
-in job order in `outputs`. With no job-count argument, it requests five jobs.
+collects results in job order in `outputs`, then prints each job index and its
+output after all workers finish. With no job-count argument, it requests five jobs.
 Each client worker owns its model and cleanup guard on its stack, so growing a
 vector of futures cannot invalidate model references or close another session.
 
