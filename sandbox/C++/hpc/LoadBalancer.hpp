@@ -22,6 +22,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -33,6 +34,32 @@
 #include <sstream>
 #include <thread>
 #include <sys/wait.h>
+
+/**
+ * @brief Dispatch connections independently while scheduler slots are occupied.
+ * A fixed HTTP pool can be filled by new-session requests waiting for PBS slots.
+ * Existing sessions then cannot evaluate or close to free those slots. Give
+ * each connection its own task, reaping completed tasks on the next enqueue.
+ * The PBS limiter still caps backend jobs; frontend threads scale with clients.
+ * enqueue and shutdown are called by the server's accept loop, not the tasks.
+ */
+class SchedulerTaskQueue : public httplib::TaskQueue {
+public:
+    void enqueue(std::function<void()> fn) override {
+        tasks.erase(std::remove_if(tasks.begin(), tasks.end(), [](auto& task) {
+            return task.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+        }), tasks.end());
+        tasks.emplace_back(std::async(std::launch::async, std::move(fn)));
+    }
+
+    void shutdown() override {
+        // Futures from launch::async wait for their tasks on destruction.
+        tasks.clear();
+    }
+
+private:
+    std::vector<std::future<void>> tasks;
+};
 
 namespace load_balancer_detail {
 
@@ -492,6 +519,7 @@ public:
                 return state->active_jobs < state->max_jobs;
             });
             ++state->active_jobs;
+            std::cout << "PBSJobLimiter: Acquired slot for job. Active jobs: " << state->active_jobs << std::endl;  
         }
         return Lease(state);
     }

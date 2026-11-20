@@ -1,0 +1,261 @@
+% Architecture guide for ../http-client.cpp.
+% Build: pdflatex -interaction=nonstopmode -halt-on-error http-client.tex
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=25mm]{geometry}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\lstset{basicstyle=\small\ttfamily,columns=fullflexible,keepspaces=true,
+  breaklines=true,frame=single,showstringspaces=false,
+  commentstyle=\color{gray},keywordstyle=\color{blue!60!black}}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\title{Architecture of the Concurrent UM-Bridge C++ Client}
+\author{\texttt{umbridge\_mox/sandbox/C++/hpc/http-client.cpp}}
+\date{}
+\begin{document}
+\maketitle
+
+\section{Purpose and execution model}
+
+The client evaluates several independent inputs through a UM-Bridge load
+balancer. Each job owns a separate \code{umbridge::HTTPModel}, a separate
+HTTP connection context, and a randomly generated session identifier. This
+lets the balancer associate each job with its own backend model server.
+The client uses the implementation in \code{umbridge_mox/umbridge/lib}.
+
+The main thread follows three phases:
+\begin{enumerate}
+  \item Create all asynchronous workers, assigning an input and a job index
+        to each one.
+  \item Consume every worker's future and store successful results in
+        \code{outputs[i]}.
+  \item After every worker has finished, print each successful job number
+        and its corresponding output, in increasing job order.
+\end{enumerate}
+Progress diagnostics such as ``Creating client'' may appear during execution.
+Numerical results are printed only in the final phase. Errors are reported
+separately to standard error.
+
+\begin{center}
+\fbox{\begin{minipage}{0.90\linewidth}
+\centering
+Main thread: validate arguments and prepare inputs\\[3pt]
+$\downarrow$ launch all workers with \code{std::launch::async}\\[3pt]
+Worker 0 \quad Worker 1 \quad $\cdots$ \quad Worker $N-1$\\
+Each worker: create session $\to$ validate $\to$ evaluate $\to$ close\\[3pt]
+$\downarrow$ return outputs or propagate exceptions through futures\\[3pt]
+Main thread: collect all futures $\to$ print stored results
+\end{minipage}}
+\end{center}
+
+\section{Data model and responsibilities}
+
+\code{ModelInput} and \code{ModelOutput} both alias
+\code{std::vector<std::vector<double>>}. The outer vector represents blocks;
+each inner vector holds the scalar values in one block. These names clarify
+which side of an evaluation a value belongs to without introducing different
+C++ types.
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{0.32\linewidth}p{0.60\linewidth}@{}}
+\toprule
+Component & Responsibility \\
+\midrule
+\code{main} & Validate arguments, prepare inputs, launch workers, collect
+results and print them after completion. \\
+\code{evaluate_job} & Own one session and carry out one validated evaluation. \\
+\code{SessionCloser} & Attempt session closure when its scope ends, including
+when an exception unwinds the worker. \\
+\code{create_session_id} & Generate a 32-character hexadecimal session ID from
+128 random bits. \\
+\code{validate_address} & Check server-address syntax before making requests. \\
+\code{validate_blocks} & Compare input or output block dimensions with model
+metadata. \\
+\code{to_string} & Format one numeric block for printing. \\
+\code{print_help} & Describe the command line and execution behavior. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Launching independent workers}
+
+For job index $i$, the current example prepares a single input block
+$[100+i,18]$ and launches the worker as follows:
+\begin{lstlisting}[language=C++]
+ModelInput inputs = {{100.0 + static_cast<double>(i), 18.0}};
+jobs.emplace_back(std::async(std::launch::async, evaluate_job,
+                             host, model_name, inputs, i));
+\end{lstlisting}
+The explicit \code{std::launch::async} policy starts an asynchronous task.
+Without this policy, \code{std::async} is allowed to defer execution until a
+future is consumed, which would undermine the intended concurrency.
+
+Task arguments are copied into the asynchronous operation. In particular,
+\code{inputs} is passed by value: destroying the local input variable at the
+end of a loop iteration does not invalidate a worker's data. The host and
+model-name arguments are also retained by the asynchronous operation for the
+call's lifetime.
+
+The vector \code{jobs} contains \code{std::future<ModelOutput>} objects. It
+does not contain models or cleanup guards. Consequently, vector reallocation
+cannot invalidate references between an HTTP model and its guard.
+Each worker constructs these objects on its own stack.
+
+The example creates one asynchronous task per requested job; it does not use a
+bounded client worker pool. For very large job counts, thread and connection
+resources must be considered separately from the limit on backend PBS jobs.
+
+\section{One worker and its session lifetime}
+
+\code{evaluate_job(host, model_name, inputs, i)} executes the following steps:
+\begin{enumerate}
+  \item Generate a session ID and construct an \code{HTTPModel}. Construction
+        discovers the available models and obtains the selected model's
+        capabilities. Against the load balancer, model-specific discovery may
+        wait for an available scheduler slot and a ready backend server.
+  \item Construct a \code{SessionCloser} referring to that model.
+  \item Verify support for evaluation and request the input and output sizes.
+        All these operations use the same session and therefore reuse the same
+        backend job.
+  \item Validate the caller-supplied input dimensions, evaluate with the default
+        model configuration, and validate the returned output dimensions.
+  \item Explicitly call \code{CloseSession()} and return the output blocks.
+\end{enumerate}
+The job index is used for progress diagnostics; the input data is supplied by
+\code{main}, rather than being generated inside the worker.
+
+\subsection{Why declaration order matters}
+\begin{lstlisting}[language=C++]
+umbridge::HTTPModel client(host, model_name, false,
+                            httplib::Headers(), create_session_id());
+SessionCloser session_closer(client);
+\end{lstlisting}
+C++ destroys local objects in reverse declaration order. The guard is therefore
+destroyed before \code{client}, so its borrowed reference remains valid during
+cleanup. The guard is noncopyable, preventing an accidental second cleanup
+owner. It does not own the model itself.
+
+
+On success, explicit closure happens before the worker returns. In the local
+UM-Bridge implementation, successful closure clears the session ID, making the
+guard's subsequent call a no-op. If an operation throws after the guard has
+been created, its destructor attempts closure during stack unwinding. It
+reports standard cleanup exceptions rather than replacing the original
+exception. If model construction itself fails, no guard exists yet; the local
+\code{HTTPModel} constructor performs its own best-effort session cleanup.
+
+Explicit closure is part of successful worker completion. If closure throws,
+the worker reports failure through its future even if evaluation produced a
+numerical result; the guard attempts closure again during unwinding.
+Forced process termination does not run scope guards, and a failed network
+cleanup request cannot guarantee that a remote job has ended.
+
+\subsection{Why the cleanup guard has no defaulted move operations}
+\code{SessionCloser} is the only class defined in \code{http-client.cpp}.
+Its user-declared destructor and deleted copy operations suppress implicit
+move generation. Adding a defaulted move constructor would be unsafe: moving
+the reference member would leave both guards referring to the same model.
+Destruction of the source guard could then close the session before the
+destination guard's scope ends. A defaulted move-assignment operator would be
+deleted by the compiler because reference members cannot be rebound.
+
+The guard therefore remains nonmovable. Supporting moves would require a
+different representation and custom operations that transfer cleanup
+responsibility and disarm the source. The current worker-local lifetime does
+not require such transfers. \code{ModelInput} and \code{ModelOutput} are aliases
+for standard vectors, whose move operations are already provided by the
+standard library; they introduce no additional classes requiring declarations.
+
+\section{Results, ordering, and exceptions}
+
+Each asynchronous worker supplies either a \code{ModelOutput} or an exception
+through its future. The main thread consumes futures in job order:
+\begin{lstlisting}[language=C++]
+std::vector<ModelOutput> outputs(num_jobs);
+for (int i = 0; i < num_jobs; ++i) {
+  try {
+    outputs[i] = jobs[i].get();
+  } catch (const std::exception &error) {
+    // Report this job and continue observing the remaining futures.
+    failed = true;
+  }
+}
+// Print outputs only after the collection loop has ended.
+\end{lstlisting}
+Calling \code{get()} waits if necessary, transfers the result, or rethrows the
+worker's exception. Each future is consumed once. Waiting first for job zero
+does not serialize evaluations: all workers were launched earlier and continue
+running independently. Each worker closes its session before returning,
+regardless of when \code{main} reaches its future. This is essential for
+releasing scheduler slots while other jobs are still waiting.
+
+Only the main thread writes to or reads the aggregate \code{outputs} vector.
+No mutex is needed for this vector. A failed job leaves its entry empty;
+validated successful jobs have at least one output block. The printing loop
+skips failed entries, prints the job index, and formats every block. Multiple
+blocks are separated by \code{ | }; values within a block are comma-separated.
+For example:
+\begin{lstlisting}
+Job 0 output: 254.000000
+Job 1 output: 256.000000
+Job 2 output: 258.000000
+\end{lstlisting}
+A job failure does not cancel other jobs. The main thread observes all futures,
+prints successful outputs after collection, and returns failure if any job
+failed. Worker progress and error messages use \code{std::osyncstream} to keep
+concurrent messages from interleaving at the character level.
+
+\section{Interaction with the load balancer and PBS}
+
+Client concurrency and scheduler capacity are separate. The client can launch
+50 workers while the balancer is configured with
+\code{--max-pbs-jobs=20}. The balancer admits at most 20 outstanding PBS jobs
+owned by that balancer, including queued jobs. Additional session requests
+wait for a slot. A worker releases its session as soon as its work is complete,
+allowing a waiting worker to proceed. Actual running capacity also depends on
+the cluster scheduler, or on \code{MAX_JOBS} in the fake PBS implementation.
+
+The balancer's \code{SchedulerTaskQueue} dispatches HTTP connections
+independently. A fixed HTTP pool could otherwise fill with new-session
+requests waiting for slots, blocking the evaluation or session-close requests
+needed to release those slots. The PBS limit bounds backend jobs; it does not
+bound frontend HTTP threads. The client itself submits no \code{qsub} or
+\code{qdel} commands: scheduler ownership belongs to the balancer.
+
+\section{Building, running, and adapting the example}
+
+Build from \code{umbridge_mox/sandbox/C++/hpc}:
+\begin{lstlisting}[language=bash]
+make http-client LoadBalancer
+\end{lstlisting}
+The build uses C++20 for \code{std::osyncstream}, thread support, and OpenSSL
+for HTTPS-enabled HTTP clients.
+
+From \code{umbridge_mox/sandbox/C++/test}, use separate terminals:
+\begin{lstlisting}[language=bash]
+# Terminal 1: use the bundled fake PBS commands.
+PATH="../hpc/bin:$PATH" ./LoadBalancer --scheduler=pbs --max-pbs-jobs=20
+
+# Terminal 2: request 50 independent evaluations.
+./http-client http://localhost:4242 50
+\end{lstlisting}
+The job-count argument is optional and defaults to five. Job indices start at
+zero. Use \code{./http-client --help} for syntax. Real-cluster deployments use
+the site's PBS commands and adapted job scripts instead of the fake commands.
+
+To provide application-specific inputs, replace the input construction in the
+launch loop with a lookup in a dataset or another computation. Keep each
+worker's model and session independent. To store results, add persistence after
+the result-collection loop, using \code{outputs[i]} as the result belonging to
+input $i$ and accounting for failed entries. This preserves parallel execution
+and the association between inputs and outputs.
+
+\end{document}
